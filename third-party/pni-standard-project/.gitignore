@@ -2,7 +2,6 @@ build
 build/
 test
 test/
-include/PnI-Config.hpp
 release/
 release*
 old/
