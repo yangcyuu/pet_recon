@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="binary" type="struct" name="BDM2CaliFileV1">
+    <EnergyCoefs type="[float]" />
+    <PositionTable type="[uint8_t]" />
+    <CenterPosition type="[UChar2D]" />
+    <EnergyProfile type="[float]" />
+    <CountMap type="[uint32_t]" />
+    <EnergyProfileCut type="[float]" />
+</Main>

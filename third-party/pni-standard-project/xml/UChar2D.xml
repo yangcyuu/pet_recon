@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="binary" type="struct" name="UChar2D">
+    <X type="uint8_t" />
+    <Y type="uint8_t" />
+</Main>

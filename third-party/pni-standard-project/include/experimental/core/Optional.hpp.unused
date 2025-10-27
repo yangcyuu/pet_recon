@@ -1,0 +1,42 @@
+#pragma once
+namespace openpni::experimental::core {
+template <typename T>
+struct Optional {
+  Optional()
+      : m_has_value(false)
+      , m_value() {}
+  Optional(
+      const T &value)
+      : m_has_value(true)
+      , m_value(value) {}
+  Optional(
+      T &&value)
+      : m_has_value(true)
+      , m_value(std::move(value)) {}
+  Optional(const Optional &other) = default;
+  Optional(Optional &&other) noexcept = default;
+  Optional &operator=(const Optional &other) = default;
+  Optional &operator=(Optional &&other) noexcept = default;
+  ~Optional() = default;
+
+  bool has_value() const { return m_has_value; }
+  explicit operator bool() const { return m_has_value; }
+
+  T &value() { // No Check.
+    return m_value;
+  }
+  const T &value() const { // No Check.
+    return m_value;
+  }
+  T &operator*() { return m_value; }
+  const T &operator*() const { return m_value; }
+  T *operator->() { return &m_value; }
+  const T *operator->() const { return &m_value; }
+  void reset() { m_has_value = false; }
+
+private:
+  bool m_has_value;
+  T m_value;
+};
+
+} // namespace openpni::experimental::core

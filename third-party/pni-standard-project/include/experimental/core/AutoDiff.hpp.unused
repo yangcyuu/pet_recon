@@ -1,0 +1,125 @@
+#pragma once
+#include "Vector.hpp"
+namespace openpni::experimental::core {
+template <FloatingPoint_c T>
+struct AutoDiff {
+  T value;
+  T diff;
+  constexpr auto create(
+      T v, T d) -> AutoDiff {
+    return AutoDiff{v, d};
+  }
+  constexpr AutoDiff operator+(
+      AutoDiff const &other) const {
+    return create(value + other.value, diff + other.diff);
+  }
+  constexpr AutoDiff operator-(
+      AutoDiff const &other) const {
+    return create(value - other.value, diff - other.diff);
+  }
+  constexpr AutoDiff operator*(
+      AutoDiff const &other) const {
+    return create(value * other.value, value * other.diff + diff * other.value);
+  }
+  constexpr AutoDiff operator/(
+      AutoDiff const &other) const {
+    return create(value / other.value, (diff * other.value - value * other.diff) / (other.value * other.value));
+  }
+  constexpr AutoDiff operator-() const { return create(-value, -diff); }
+  constexpr AutoDiff &operator+=(
+      AutoDiff const &other) {
+    value += other.value;
+    diff += other.diff;
+    return *this;
+  }
+  constexpr AutoDiff &operator-=(
+      AutoDiff const &other) {
+    value -= other.value;
+    diff -= other.diff;
+    return *this;
+  }
+  constexpr AutoDiff &operator*=(
+      AutoDiff const &other) {
+    diff = value * other.diff + diff * other.value;
+    value *= other.value;
+    return *this;
+  }
+  constexpr AutoDiff &operator/=(
+      AutoDiff const &other) {
+    diff = (diff * other.value - value * other.diff) / (other.value * other.value);
+    value /= other.value;
+    return *this;
+  }
+  constexpr auto constant(
+      T v) -> AutoDiff {
+    return create(v, T(0));
+  }
+  constexpr auto variable(
+      T v) -> AutoDiff {
+    return create(v, T(1));
+  }
+  friend AutoDiff pow(
+      AutoDiff const &base, AutoDiff exponent) {
+    T v = std::pow(base.value, exponent.value);
+    T d = v * (exponent.diff * std::log(base.value) + (exponent.value * base.diff) / base.value);
+    return create(v, d);
+  }
+  friend AutoDiff exp(
+      AutoDiff const &x) {
+    T v = std::exp(x.value);
+    T d = v * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff log(
+      AutoDiff const &x) {
+    T v = std::log(x.value);
+    T d = (1 / x.value) * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff sin(
+      AutoDiff const &x) {
+    T v = std::sin(x.value);
+    T d = std::cos(x.value) * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff cos(
+      AutoDiff const &x) {
+    T v = std::cos(x.value);
+    T d = -std::sin(x.value) * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff tan(
+      AutoDiff const &x) {
+    T v = std::tan(x.value);
+    T d = (1 / (std::cos(x.value) * std::cos(x.value))) * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff sqrt(
+      AutoDiff const &x) {
+    T v = std::sqrt(x.value);
+    T d = (0.5 / v) * x.diff;
+    return create(v, d);
+  }
+  friend AutoDiff atan2(
+      AutoDiff const &y, AutoDiff const &x) {
+    T v = std::atan2(y.value, x.value);
+    T d = (x.value * y.diff - y.value * x.diff) / (x.value * x.value + y.value * y.value);
+    return create(v, d);
+  }
+  friend AutoDiff min(
+      AutoDiff const &a, AutoDiff const &b) {
+    if (a.value < b.value)
+      return a;
+    else
+      return b;
+  }
+  friend AutoDiff max(
+      AutoDiff const &a, AutoDiff const &b) {
+    if (a.value > b.value)
+      return a;
+    else
+      return b;
+  }
+};
+
+} // namespace openpni::experimental::core

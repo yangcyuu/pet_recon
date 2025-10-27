@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="binary" type="struct" name="BDM50100CaliFileV1">
+    <TDC type="[float[64]]" />
+    <Energy type="[struct]">
+        <IP type="uint16_t"/>
+        <CH type="uint16_t"/>
+        <K type="float"/>
+        <KB type="float"/>
+        <KX type="float"/>
+        <A type="float"/>
+        <B type="float"/>
+        <KE type="float"/>
+    </Energy>
+</Main>

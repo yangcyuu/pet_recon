@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="binary" type="struct" name="NormalizationFactorsV1">
+    <CryCount type="[float]" />
+    <BlockA type="[float]" />
+    <BlockT type="[float]" />
+    <Plane type="[float]" />
+    <Radial type="[float]" />
+    <Interference type="[float]" />
+    <CryFct type="[float]" />
+</Main>

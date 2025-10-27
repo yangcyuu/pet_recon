@@ -1,0 +1,26 @@
+# .clang-format
+BraceWrapping:
+  AfterFunction: false
+
+AllowShortFunctionsOnASingleLine: Inline
+UseTab: Never
+TabWidth: 4
+IndentWidth: 2
+ColumnLimit: 120
+BreakTemplateDeclarations: Yes
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<.*>$'
+    Priority:        1
+    SortPriority:    0
+    CaseSensitive:   false
+  - Regex:           '.*'
+    Priority:        2
+    SortPriority:    0
+    CaseSensitive:   false
+
+BreakAfterReturnType: Automatic
+BreakBeforeTernaryOperators: true
+BreakFunctionDefinitionParameters: true
+BreakConstructorInitializers: BeforeComma
+BreakBeforeConceptDeclarations: Always

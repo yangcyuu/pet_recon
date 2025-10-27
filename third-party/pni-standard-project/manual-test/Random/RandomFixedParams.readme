@@ -1,0 +1,12 @@
+########################
+different pet system instinct randomCorr Fixed Parameter will be showed here
+########################
+
+########1. E180
+constexpr int __minSectorDifference {4};
+constexpr int __radialModuleNumS{6};
+
+
+########2. 930
+constexpr int __minSectorDifference {13};
+constexpr int __radialModuleNumS{11};

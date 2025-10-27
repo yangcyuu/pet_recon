@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="PolygonalSystemDefine">
+    <Edges type="int" />
+    <DetectorPerEdge type="int" />
+    <DetectorLen type="double" />
+    <Radius type="double" />
+    <AngleOf1stPerp_degree type="double" />
+    <DetectorRings type="int" />
+    <RingDistance type="double" />
+    <DetectorType type="string" />
+    <DetectorInfo type="[struct]">
+        <CalibrationFile type="string" />
+        <IP type="struct">
+            <src_addr type="string" />
+            <src_port type="int" />
+            <dst_addr type="string" />
+            <dst_port type="int" />
+        </IP>
+    </DetectorInfo>
+</Main>

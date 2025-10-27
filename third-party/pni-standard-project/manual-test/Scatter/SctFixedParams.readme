@@ -1,0 +1,19 @@
+########################
+different pet system instinct scatterCorr Fixed Parameter will be showed here
+########################
+
+
+########1. E180
+constexpr int __minSectorDifference{4};
+constexpr double __taiFittingThreshold{0.95};
+constexpr double __scatterPointsThreshold{0.00124};
+constexpr core::Vector<double, 3> __scatterEnergyWindow{350.00, 650.00, 0.15};
+constexpr core::Vector<double, 3> __scatterEffTableEnergy{0.01, 700.00, 0.01};
+
+
+########1. 930
+constexpr int __minSectorDifference{13};
+constexpr double __taiFittingThreshold{0.95};
+constexpr double __scatterPointsThreshold{0.004};
+constexpr core::Vector<double, 3> __scatterEnergyWindow{420.f, 700.f, 0.15};
+constexpr core::Vector<double, 3> __scatterEffTableEnergy{0.f, 700.00, 0.01};
