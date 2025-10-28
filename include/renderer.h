@@ -7,9 +7,9 @@
 #include <ATen/ops/_sobol_engine_draw.h>
 
 #include "raw_data.h"
+#include "sobol.h"
 #include "texture.h"
 #include "utils.h"
-#include "sobol.h"
 
 struct RendererParameters {
   using Model = openpni::example::polygon::PolygonModel;
@@ -77,7 +77,7 @@ public:
                                          parameters.offset)),
       _voxel_size(parameters.voxel_size), _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
-      _iter_per_slice(parameters.iter_per_slice), _use_adam(parameters.use_adam),_use_sobol(parameters.use_sobol),
+      _iter_per_slice(parameters.iter_per_slice), _use_adam(parameters.use_adam), _use_sobol(parameters.use_sobol),
       _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
       _tof_center_offset(parameters.tof_center_offset),
       _final_result(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA),
@@ -85,11 +85,11 @@ public:
     torch::manual_seed(parameters.seed);
   }
 
-  void render(const std::string &path = {});
+  void render(std::string_view path = {});
 
   void render_slice(size_t index);
 
-  void save(const std::string &path) const { _final_result.save(path); }
+  void save(const std::string_view path) const { (_final_result * _mask).save_rawdata(path); }
 
 private:
   std::unique_ptr<Model> _model =
@@ -131,6 +131,8 @@ private:
   bool _rendering_uniform = false;
 
   Texture3D _final_result = Texture3D(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA);
+
+  Texture3D _mask = Texture3D(false, _image_size.x, _image_size.y, _image_size.z, 1, torch::dtype(torch::kBool).device(torch::kCUDA));
 
   torch::optim::Adam _optimizer{{_final_result.tensor()}, torch::optim::AdamOptions(1e-3f)};
 

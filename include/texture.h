@@ -322,6 +322,8 @@ public:
 
   void save(const std::string &filename) const;
 
+  void save_rawdata(const std::string_view filename) const;
+
 private:
   torch::Tensor _data;
 };

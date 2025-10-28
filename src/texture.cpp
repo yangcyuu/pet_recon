@@ -1,5 +1,6 @@
 #include "texture.h"
 #include <filesystem>
+#include <fstream>
 #include "cgmath.h"
 
 void Texture2D::save(const std::string &filename) const {
@@ -113,4 +114,24 @@ void Texture3D::save(const std::string &filename) const {
       ERROR_AND_EXIT("Texture3D::save: failed to save image to {}", slice_dir.string());
     }
   }
+}
+
+void Texture3D::save_rawdata(const std::string_view filename) const {
+  torch::Tensor tensor = this->tensor().detach().clone().permute({1, 2, 3, 0}).contiguous(); // to [D, H, W, C]
+  if (tensor.dtype() != torch::kFloat32) {
+    tensor = tensor.to(torch::kFloat32);
+  }
+  if (!tensor.device().is_cpu()) {
+    tensor = tensor.to(torch::kCPU);
+  }
+  if (!std::filesystem::exists(std::filesystem::path(filename).parent_path())) {
+    std::filesystem::create_directories(std::filesystem::path(filename).parent_path());
+  }
+  std::ofstream ofs(filename.data(), std::ios::binary);
+  if (!ofs) {
+    ERROR_AND_EXIT("Texture3D::save_rawdata: failed to open file {}", filename);
+  }
+  ofs.write(static_cast<const char *>(tensor.data_ptr()), tensor.numel() * sizeof(float));
+  ofs.flush();
+  ofs.close();
 }
