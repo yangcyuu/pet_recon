@@ -124,10 +124,11 @@ void Texture3D::save_rawdata(const std::string_view filename) const {
   if (!tensor.device().is_cpu()) {
     tensor = tensor.to(torch::kCPU);
   }
-  if (!std::filesystem::exists(std::filesystem::path(filename).parent_path())) {
-    std::filesystem::create_directories(std::filesystem::path(filename).parent_path());
+  std::filesystem::path filepath = std::filesystem::absolute(filename);
+  if (!std::filesystem::exists(filepath.parent_path())) {
+    std::filesystem::create_directories(filepath.parent_path());
   }
-  std::ofstream ofs(filename.data(), std::ios::binary);
+  std::ofstream ofs(filepath, std::ios::binary);
   if (!ofs) {
     ERROR_AND_EXIT("Texture3D::save_rawdata: failed to open file {}", filename);
   }
