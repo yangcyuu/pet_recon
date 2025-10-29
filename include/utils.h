@@ -11,7 +11,7 @@
 
 #define ERROR_AND_EXIT(msg, ...)                                                                                       \
   do {                                                                                                                 \
-    std::println(std::cerr, msg, ##__VA_ARGS__);                                                                       \
+    std::cerr << std::format(msg, ##__VA_ARGS__);                                                                      \
     std::exit(EXIT_FAILURE);                                                                                           \
   } while (false)
 

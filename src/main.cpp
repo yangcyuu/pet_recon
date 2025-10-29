@@ -10,11 +10,12 @@ int main() {
       .offset = 6,
       .samples_per_crystal = 1,
       .samples_per_lor = 1,
-      .iter_per_slice = 1,
+      .iter_per_slice = 10,
+      // .batch_size = 256,
       .use_sobol = true,
       .tof_sigma = 0.0f,
       .voxel_size = {1.0f, 1.0f, 1.0f},
-      .image_size = {240, 240, 240},
+      .image_size = {120, 120, 240},
   });
 
   renderer.render("mich_recon.image3d");

@@ -4,8 +4,7 @@
 #include <detector/BDM2.hpp>
 #include <detector/Detectors.hpp>
 
-#include <ATen/ops/_sobol_engine_draw.h>
-
+#include "cgmath.h"
 #include "raw_data.h"
 #include "sobol.h"
 #include "texture.h"
@@ -31,6 +30,8 @@ struct RendererParameters {
   size_t samples_per_lor = 16;
   /** @brief 每个切片的迭代次数 */
   size_t iter_per_slice = 10;
+  /** @brief 每次处理的 LOR 数量 */
+  size_t batch_size = 32768;
   /** @brief 是否使用 Sobol 低差采样 */
   bool use_sobol = false;
   /** @brief 学习率 */
@@ -75,7 +76,7 @@ public:
                                          parameters.offset)),
       _voxel_size(parameters.voxel_size), _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
-      _iter_per_slice(parameters.iter_per_slice), _use_sobol(parameters.use_sobol),
+      _iter_per_slice(parameters.iter_per_slice), _batch_size(parameters.batch_size), _use_sobol(parameters.use_sobol),
       _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
       _tof_center_offset(parameters.tof_center_offset) {
     torch::manual_seed(parameters.seed);
@@ -83,7 +84,6 @@ public:
 
   void render(std::string_view path = {});
 
-  void render_slice(size_t index, Texture3D &result, Texture3D &uniform_result);
 
   void save(const std::string_view path) const { (_final_result * _mask).save_rawdata(path); }
 
@@ -116,6 +116,7 @@ private:
   size_t _samples_per_crystal = 16;
   size_t _samples_per_lor = 16;
   size_t _iter_per_slice = 10;
+  size_t _batch_size = 32768;
   bool _use_sobol = false;
   bool _enable_importance_sampling = false;
   float _tof_sigma = 0.5f;
@@ -140,8 +141,8 @@ private:
   //                     const Texture3D &source, DiffImage2D<float> &result);
 
   template<std::ranges::view T>
-  void render_lor(size_t index, const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source,
-                  Texture3D &result, Texture3D &uniform_result);
+  void render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture3D &result,
+                  Texture3D &uniform_result);
 
   torch::Tensor render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
                                const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,
