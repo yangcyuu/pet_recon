@@ -31,8 +31,6 @@ struct RendererParameters {
   size_t samples_per_lor = 16;
   /** @brief 每个切片的迭代次数 */
   size_t iter_per_slice = 10;
-  /** @brief 是否启用 Adam 优化器 */
-  bool use_adam = false;
   /** @brief 是否使用 Sobol 低差采样 */
   bool use_sobol = false;
   /** @brief 学习率 */
@@ -77,17 +75,15 @@ public:
                                          parameters.offset)),
       _voxel_size(parameters.voxel_size), _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
-      _iter_per_slice(parameters.iter_per_slice), _use_adam(parameters.use_adam), _use_sobol(parameters.use_sobol),
+      _iter_per_slice(parameters.iter_per_slice), _use_sobol(parameters.use_sobol),
       _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
-      _tof_center_offset(parameters.tof_center_offset),
-      _final_result(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA),
-      _optimizer({_final_result.tensor()}, torch::optim::AdamOptions(parameters.learning_rate)) {
+      _tof_center_offset(parameters.tof_center_offset) {
     torch::manual_seed(parameters.seed);
   }
 
   void render(std::string_view path = {});
 
-  void render_slice(size_t index);
+  void render_slice(size_t index, Texture3D &result, Texture3D &uniform_result);
 
   void save(const std::string_view path) const { (_final_result * _mask).save_rawdata(path); }
 
@@ -120,7 +116,6 @@ private:
   size_t _samples_per_crystal = 16;
   size_t _samples_per_lor = 16;
   size_t _iter_per_slice = 10;
-  bool _use_adam = false;
   bool _use_sobol = false;
   bool _enable_importance_sampling = false;
   float _tof_sigma = 0.5f;
@@ -131,10 +126,11 @@ private:
   bool _rendering_uniform = false;
 
   Texture3D _final_result = Texture3D(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA);
+  Texture3D _uniform_result = Texture3D(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA);
 
-  Texture3D _mask = Texture3D(false, _image_size.x, _image_size.y, _image_size.z, 1, torch::dtype(torch::kBool).device(torch::kCUDA));
+  Texture3D _mask =
+      Texture3D(false, _image_size.x, _image_size.y, _image_size.z, 1, torch::dtype(torch::kBool).device(torch::kCUDA));
 
-  torch::optim::Adam _optimizer{{_final_result.tensor()}, torch::optim::AdamOptions(1e-3f)};
 
   SobolEngine _crystal0_sobol = SobolEngine(3, true);
   SobolEngine _crystal1_sobol = SobolEngine(3, true);
@@ -144,8 +140,8 @@ private:
   //                     const Texture3D &source, DiffImage2D<float> &result);
 
   template<std::ranges::view T>
-  void render_lor(T lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture2D &result,
-                  Texture2D &uniform_result);
+  void render_lor(size_t index, const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source,
+                  Texture3D &result, Texture3D &uniform_result);
 
   torch::Tensor render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
                                const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,

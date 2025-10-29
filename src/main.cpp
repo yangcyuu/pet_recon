@@ -8,10 +8,9 @@ int main() {
   auto renderer = Renderer({
       .mich_file = "coin_all.image3d",
       .offset = 6,
-      .samples_per_crystal = 16,
-      .samples_per_lor = 16,
-      .iter_per_slice = 10,
-      .use_adam = false,
+      .samples_per_crystal = 1,
+      .samples_per_lor = 1,
+      .iter_per_slice = 1,
       .use_sobol = true,
       .tof_sigma = 0.0f,
       .voxel_size = {1.0f, 1.0f, 1.0f},

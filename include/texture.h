@@ -141,6 +141,11 @@ public:
     _data.index_put_({channels, rows, cols}, values);
   }
 
+  void add_assign(const torch::Tensor &rows, const torch::Tensor &cols, const torch::Tensor &channels,
+                  const torch::Tensor &values) {
+    MARK_AS_UNUSED(_data.index_put_({channels, rows, cols}, values, true));
+  }
+
   const torch::Tensor &tensor() const { return _data; }
 
   void set_requires_grad(bool requires_grad) const { MARK_AS_UNUSED(_data.set_requires_grad(requires_grad)); }
@@ -295,6 +300,12 @@ public:
               const torch::Tensor &channels, const torch::Tensor &values) {
     // depths, rows, cols, channels, values: [N]
     _data.index_put_({channels, depths, rows, cols}, values);
+  }
+
+  void add_assign(const torch::Tensor &depths, const torch::Tensor &rows, const torch::Tensor &cols,
+                  const torch::Tensor &channels, const torch::Tensor &values) {
+    // depths, rows, cols, channels, values: [N]
+    MARK_AS_UNUSED(_data.index_put_({channels, depths, rows, cols}, values, true));
   }
 
   const torch::Tensor &tensor() const { return _data; }

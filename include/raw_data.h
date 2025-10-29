@@ -145,6 +145,10 @@ public:
     return Texture2D(_data.get() + slice_index * _num_bins * _num_views, _num_bins, _num_views, 1, options);
   }
 
+  Texture3D texture(const torch::TensorOptions &options = {}) const {
+    return Texture3D(_data.get(), _num_bins, _num_views, _num_slices, 1, options);
+  }
+
 private:
   size_t _num_bins = 0;
   size_t _num_views = 0;

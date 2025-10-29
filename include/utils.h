@@ -22,11 +22,10 @@ concept array_accessible = requires(T a, size_t i) {
   { a[i] };
 };
 
-inline torch::Tensor
-gaussian_sample(torch::Tensor rd, const torch::Tensor &sigma,
-                const torch::Tensor &mean = torch::zeros(1, torch::TensorOptions().pinned_memory(true))) {
+inline torch::Tensor gaussian_sample(torch::Tensor rd, const torch::Tensor &sigma,
+                                     const torch::Tensor &mean = torch::zeros(1, torch::kCUDA)) {
   // rd = torch::clamp(rd, torch::nextafter(torch::zeros(1, rd.device()), torch::ones(1, rd.device())),
   //                   torch::nextafter(torch::ones(1, rd.device()), torch::zeros(1, rd.device())));
   rd = torch::clamp(rd, 1e-6f, 1.0f - 1e-6f);
-  return torch::erfinv(2 * rd - 1) * sigma * std::sqrt(2.0f) + mean.to(rd.device(), true);
+  return torch::erfinv(2 * rd - 1) * sigma * std::sqrt(2.0f) + mean;
 }
