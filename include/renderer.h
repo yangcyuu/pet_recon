@@ -1,22 +1,18 @@
 #pragma once
 
-#include <Polygon.hpp>
-#include <detector/BDM2.hpp>
-#include <detector/Detectors.hpp>
+#include <PnI-Config.hpp>
+#include <experimental/node/MichCrystal.hpp>
 
 #include "cgmath.h"
+#include "define.h"
 #include "raw_data.h"
 #include "sobol.h"
 #include "texture.h"
 #include "utils.h"
 
 struct RendererParameters {
-  using Model = openpni::example::polygon::PolygonModel;
-  using System = openpni::example::PolygonalSystem;
-  using Runtime = openpni::device::bdm2::BDM2Runtime;
-  using ModelBuilder = openpni::example::polygon::PolygonModelBuilder<Runtime>;
-  using DetectorUnchangable = openpni::device::DetectorUnchangable;
-  using Vec3 = openpni::basic::Vec3<float>;
+  using Vector3 = openpni::experimental::core::Vector<float, 3>;
+  using MichDefine = openpni::experimental::core::MichDefine;
 
   /** @brief 输入 MICH 数据文件路径 */
   std::string_view mich_file;
@@ -45,36 +41,34 @@ struct RendererParameters {
   /** @brief 随机种子 */
   size_t seed = 42;
   /** @brief 单体素尺寸 */
-  Vec3 voxel_size = {0.5f, 0.5f, 0.5f};
+  Vector3 voxel_size = {0.5f, 0.5f, 0.5f};
   /** @brief 重建图像像素大小 */
-  Vec3 image_size = {320, 320, 400};
+  Vector3 image_size = {320, 320, 400};
   /** @brief 扫描系统几何描述 */
-  System polygon = openpni::example::E180();
+  MichDefine define = E180();
 };
 
 class Renderer {
-  using Model = openpni::example::polygon::PolygonModel;
-  using System = openpni::example::PolygonalSystem;
-  using Runtime = openpni::device::bdm2::BDM2Runtime;
-  using ModelBuilder = openpni::example::polygon::PolygonModelBuilder<Runtime>;
-  using MichDefaultIndexer = openpni::example::polygon::IndexerOfSubsetForMich;
-  using DataView = openpni::basic::DataViewQTY<MichDefaultIndexer, float>;
-  using CrystalGeometry = openpni::basic::CrystalGeometry;
-  using Vec3 = openpni::basic::Vec3<float>;
+  using Vector3 = openpni::experimental::core::Vector<float, 3>;
+  using MichDefine = openpni::experimental::core::MichDefine;
+  using RangeGenerator = openpni::experimental::core::RangeGenerator;
+  using MichCrystal = openpni::experimental::node::MichCrystal;
+  using RectangleID = openpni::experimental::core::RectangleID;
+  using RectangleGeom = openpni::experimental::core::RectangleGeom<float>;
 
 public:
   Renderer() = default;
-  template<typename DetectorType = Runtime>
   explicit Renderer(const RendererParameters &parameters) :
-      _model(ModelBuilder(parameters.polygon, openpni::device::detectorUnchangable<DetectorType>()).build()),
+      _mich_range_generator(RangeGenerator::create(parameters.define)),
       _mich(RawPETData<float>::from_file(parameters.mich_file,
                                          {
-                                             .num_bins = _model->locator().bins().size(),
-                                             .num_views = _model->locator().views().size(),
-                                             .num_slices = _model->locator().slices().size(),
+                                             .num_bins = _mich_range_generator.allBins().size(),
+                                             .num_views = _mich_range_generator.allViews().size(),
+                                             .num_slices = _mich_range_generator.allSlices().size(),
                                          },
                                          parameters.offset)),
-      _voxel_size(parameters.voxel_size), _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
+      _mich_crystal(MichCrystal(parameters.define)), _voxel_size(parameters.voxel_size),
+      _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
       _iter_per_slice(parameters.iter_per_slice), _batch_size(parameters.batch_size), _use_sobol(parameters.use_sobol),
       _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
@@ -88,30 +82,18 @@ public:
   void save(const std::string_view path) const { (_final_result * _mask).save_rawdata(path); }
 
 private:
-  std::unique_ptr<Model> _model =
-      ModelBuilder(openpni::example::E180(), openpni::device::detectorUnchangable<Runtime>()).build();
+  RangeGenerator _mich_range_generator = RangeGenerator::create(E180());
   RawPETData<float> _mich = {
-      _model->locator().bins().size(),
-      _model->locator().views().size(),
-      _model->locator().slices().size(),
-  };
-  DataView _data_view = {
-      .qtyValue = _mich.data(),
-      .crystalGeometry = _model->crystalGeometry().data(),
-      .indexer =
-          {
-              .scanner = _model->polygonSystem(),
-              .detector = _model->detectorInfo().geometry,
-              .subsetNum = 1,
-              .subsetId = 0,
-              .binCut = 0,
-          },
+      _mich_range_generator.allBins().size(),
+      _mich_range_generator.allViews().size(),
+      _mich_range_generator.allSlices().size(),
   };
 
-  Vec3 _voxel_size = {0.5f, 0.5f, 0.5f};
-  Vec3 _image_size = {320, 320, 400};
-  Vec3 _crystal_size = {_model->detectorInfo().geometry.crystalSizeU, _model->detectorInfo().geometry.crystalSizeV,
-                        0.0f};
+  MichCrystal _mich_crystal = MichCrystal(E180());
+
+  Vector3 _voxel_size = {0.5f, 0.5f, 0.5f};
+  Vector3 _image_size = {320, 320, 400};
+
   float _crystal_sigma = 0.1f;
   size_t _samples_per_crystal = 16;
   size_t _samples_per_lor = 16;
@@ -126,11 +108,11 @@ private:
   size_t _curr_slice = 0;
   bool _rendering_uniform = false;
 
-  Texture3D _final_result = Texture3D(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA);
-  Texture3D _uniform_result = Texture3D(1.0f, _image_size.x, _image_size.y, _image_size.z, 1, torch::kCUDA);
+  Texture3D _final_result = Texture3D(1.0f, _image_size[0], _image_size[1], _image_size[2], 1, torch::kCUDA);
+  Texture3D _uniform_result = Texture3D(1.0f, _image_size[0], _image_size[1], _image_size[2], 1, torch::kCUDA);
 
-  Texture3D _mask =
-      Texture3D(false, _image_size.x, _image_size.y, _image_size.z, 1, torch::dtype(torch::kBool).device(torch::kCUDA));
+  Texture3D _mask = Texture3D(false, _image_size[0], _image_size[1], _image_size[2], 1,
+                              torch::dtype(torch::kBool).device(torch::kCUDA));
 
 
   SobolEngine _crystal0_sobol = SobolEngine(3, true);

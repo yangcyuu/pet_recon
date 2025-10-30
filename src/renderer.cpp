@@ -7,8 +7,8 @@
 void Renderer::render(const std::string_view path) {
   std::ranges::for_each(std::views::iota(0uz, _iter_per_slice), [&](size_t iter) {
     _curr_iter = iter;
-    const auto &locator = _model->locator();
-    auto lors = locator.allLORs();
+    const auto &generator = _mich_range_generator;
+    auto lors = generator.allLORs();
     Texture3D target = _mich.texture().tensor().to(torch::kCUDA); // [1, D, H, W]
 
     Texture3D &source = _final_result;
@@ -19,9 +19,11 @@ void Renderer::render(const std::string_view path) {
     uniform_source.set_requires_grad(true);
     uniform_source.zero_grad();
 
-    Texture3D result(locator.bins().size(), locator.views().size(), locator.slices().size(), 1, torch::kCUDA);
+    Texture3D result(generator.allBins().size(), generator.allViews().size(), generator.allSlices().size(), 1,
+                     torch::kCUDA);
 
-    Texture3D uniform_result(locator.bins().size(), locator.views().size(), locator.slices().size(), 1, torch::kCUDA);
+    Texture3D uniform_result(generator.allBins().size(), generator.allViews().size(), generator.allSlices().size(), 1,
+                             torch::kCUDA);
 
     size_t batch_num = (std::ranges::distance(lors) + _batch_size - 1) / _batch_size;
     for (size_t batch_index = 0; batch_index < batch_num; ++batch_index) {
@@ -40,11 +42,11 @@ void Renderer::render(const std::string_view path) {
     uniform_result.tensor().mean().backward();
     Texture3D drdi = uniform_source.grad();
 
-
     torch::NoGradGuard no_grad;
     Texture3D g = torch::where(drdi.tensor() > 1e-6f, (dldi / drdi).tensor(), torch::zeros_like(drdi.tensor()));
-    Texture3D update =
-        torch::where(source.tensor() != 0.0f, (source * g).tensor(), source.tensor().mean() * g.tensor());
+    // Texture3D update =
+    //     torch::where(source.tensor() != 0.0f, (source * g).tensor(), source.tensor().mean() * g.tensor());
+    Texture3D update = source * g;
 
     _mask = torch::where(update.tensor() != 0.0f, torch::ones_like(_mask.tensor()), _mask.tensor());
     MARK_AS_UNUSED(source.add_(update).clamp_min_(0.0f));
@@ -100,16 +102,21 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   p1u_data.reserve(num_lors * 3);
   p1v_data.reserve(num_lors * 3);
 
-  const auto &locator = _model->locator();
+  auto crystal_geometries = _mich_crystal.getHCrystalsBatch(lor_indices | std::ranges::to<std::vector<size_t>>());
+
+  const auto &generator = _mich_range_generator;
   size_t clipped_lor_count = 0;
   for (size_t lor_index = 0; lor_index < num_lors; ++lor_index) {
-    size_t bin_index = lor_indices[lor_index] % locator.bins().size();
-    size_t view_index = (lor_indices[lor_index] / locator.bins().size()) % locator.views().size();
-    size_t slice_index =
-        lor_indices[lor_index] / (locator.bins().size() * locator.views().size()) % locator.slices().size();
-    auto event = _data_view.at(lor_indices[lor_index]);
-    const auto &position0 = event.crystal1.geometry->position;
-    const auto &position1 = event.crystal2.geometry->position;
+    size_t bin_index = lor_indices[lor_index] % generator.allBins().size();
+    size_t view_index = lor_indices[lor_index] / generator.allBins().size() % generator.allViews().size();
+    size_t slice_index = lor_indices[lor_index] / (generator.allBins().size() * generator.allViews().size()) %
+                         generator.allSlices().size();
+    const auto &position0 = crystal_geometries[2 * lor_index].O;
+    const auto &position1 = crystal_geometries[2 * lor_index + 1].O;
+    const auto &direction_u0 = crystal_geometries[2 * lor_index].U;
+    const auto &direction_v0 = crystal_geometries[2 * lor_index].V;
+    const auto &direction_u1 = crystal_geometries[2 * lor_index + 1].U;
+    const auto &direction_v1 = crystal_geometries[2 * lor_index + 1].V;
     if (!lor_in_image(position0, position1, _voxel_size, _image_size)) {
       clipped_lor_count++;
       continue;
@@ -117,16 +124,12 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
     bin_indices.push_back(static_cast<int64_t>(bin_index));
     view_indices.push_back(static_cast<int64_t>(view_index));
     slice_indices.push_back(static_cast<int64_t>(slice_index));
-    p0_data.insert(p0_data.end(), {position0.x, position0.y, position0.z});
-    p1_data.insert(p1_data.end(), {position1.x, position1.y, position1.z});
-    p0u_data.insert(p0u_data.end(), {event.crystal1.geometry->directionU.x, event.crystal1.geometry->directionU.y,
-                                     event.crystal1.geometry->directionU.z});
-    p0v_data.insert(p0v_data.end(), {event.crystal1.geometry->directionV.x, event.crystal1.geometry->directionV.y,
-                                     event.crystal1.geometry->directionV.z});
-    p1u_data.insert(p1u_data.end(), {event.crystal2.geometry->directionU.x, event.crystal2.geometry->directionU.y,
-                                     event.crystal2.geometry->directionU.z});
-    p1v_data.insert(p1v_data.end(), {event.crystal2.geometry->directionV.x, event.crystal2.geometry->directionV.y,
-                                     event.crystal2.geometry->directionV.z});
+    p0_data.insert(p0_data.end(), {position0[0], position0[1], position0[2]});
+    p1_data.insert(p1_data.end(), {position1[0], position1[1], position1[2]});
+    p0u_data.insert(p0u_data.end(), {direction_u0[0], direction_u0[1], direction_u0[2]});
+    p0v_data.insert(p0v_data.end(), {direction_v0[0], direction_v0[1], direction_v0[2]});
+    p1u_data.insert(p1u_data.end(), {direction_u1[0], direction_u1[1], direction_u1[2]});
+    p1v_data.insert(p1v_data.end(), {direction_v1[0], direction_v1[1], direction_v1[2]});
   }
 
   std::cout << std::format(" {}/{} LORs clipped.\t\t\t", clipped_lor_count, num_lors) << std::flush;
@@ -195,8 +198,8 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
   torch::Tensor tof_sigma_t = torch::tensor(_tof_sigma, device);
   torch::Tensor tof_offset_t = torch::tensor(_tof_center_offset, device);
 
-  torch::Tensor voxel_size = torch::tensor({_voxel_size.x, _voxel_size.y, _voxel_size.z}, device);
-  torch::Tensor image_size = torch::tensor({_image_size.x, _image_size.y, _image_size.z}, device);
+  torch::Tensor voxel_size = torch::tensor({_voxel_size[0], _voxel_size[1], _voxel_size[2]}, device);
+  torch::Tensor image_size = torch::tensor({_image_size[0], _image_size[1], _image_size[2]}, device);
 
   // [N, N_crystal, 3]
   torch::Tensor crystal0_offsets = gaussian_sample(crystal0_samples, crystal_sigma);
@@ -208,10 +211,8 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
   torch::Tensor crystal1_offsets_v = crystal1_offsets.select(-1, 1).unsqueeze(-1);
 
   // [N, N_crystal, 3]
-  torch::Tensor p0d = p0.unsqueeze(1) + crystal0_offsets_u * (p0u.unsqueeze(1) * _crystal_size.x) / 2 +
-                      crystal0_offsets_v * (p0v.unsqueeze(1) * _crystal_size.y) / 2;
-  torch::Tensor p1d = p1.unsqueeze(1) + crystal1_offsets_u * (p1u.unsqueeze(1) * _crystal_size.x) / 2 +
-                      crystal1_offsets_v * (p1v.unsqueeze(1) * _crystal_size.y) / 2;
+  torch::Tensor p0d = p0.unsqueeze(1) + crystal0_offsets_u * p0u.unsqueeze(1) + crystal0_offsets_v * p0v.unsqueeze(1);
+  torch::Tensor p1d = p1.unsqueeze(1) + crystal1_offsets_u * p1u.unsqueeze(1) + crystal1_offsets_v * p1v.unsqueeze(1);
 
 
   // [N, N_crystal, 1]

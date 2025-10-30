@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Polygon.hpp>
+#include "define.h"
 #include "utils.h"
 
 template<typename T>
@@ -28,27 +29,26 @@ T linear_to_gamma(T value, T gamma = static_cast<T>(2.2)) {
   return LUT[std::clamp<size_t>(std::round(value * 1023), 0, 1023)];
 }
 
-using Vec3 = openpni::basic::Vec3<float>;
-inline bool lor_in_image(const Vec3 &p0, const Vec3 &p1, const Vec3 &voxel_size, const Vec3 &image_size) {
-  Vec3 half_image_size = image_size * 0.5f * voxel_size;
-  Vec3 min_bound(-half_image_size.x, -half_image_size.y, -half_image_size.z);
-  Vec3 max_bound = half_image_size;
+inline bool lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0,
+                         const openpni::experimental::core::Vector<float, 3> &p1,
+                         const openpni::experimental::core::Vector<float, 3> &voxel_size,
+                         const openpni::experimental::core::Vector<float, 3> &image_size) {
+  openpni::experimental::core::Vector<float, 3> half_image_size = image_size * 0.5f * voxel_size;
+  openpni::experimental::core::Vector<float, 3> min_bound = -half_image_size;
+  openpni::experimental::core::Vector<float, 3> max_bound = half_image_size;
 
-  Vec3 dir = p1 - p0;
+  openpni::experimental::core::Vector<float, 3> dir = p1 - p0;
   float tmin = 0.0f;
   float tmax = 1.0f;
 
-  float epsilon = std::max({half_image_size.x, half_image_size.y, half_image_size.z}) * 1e-6f;
+  float epsilon = std::max({half_image_size[0], half_image_size[1], half_image_size[2]}) * 1e-6f;
 
   for (int i = 0; i < 3; ++i) {
-    float origin, direction, min_b, max_b;
+    float origin = p0[i];
+    float direction = dir[i];
+    float min_b = min_bound[i];
+    float max_b = max_bound[i];
 
-    switch(i) {
-      case 0: origin = p0.x; direction = dir.x; min_b = min_bound.x; max_b = max_bound.x; break;
-      case 1: origin = p0.y; direction = dir.y; min_b = min_bound.y; max_b = max_bound.y; break;
-      case 2: origin = p0.z; direction = dir.z; min_b = min_bound.z; max_b = max_bound.z; break;
-      default: return false;
-    }
 
     if (std::abs(direction) < epsilon) {
       if (origin < min_b || origin > max_b) {
