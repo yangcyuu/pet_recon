@@ -11,8 +11,8 @@ int main() {
       // .batch_size = 256,
       .use_sobol = true,
       .tof_sigma = 0.0f,
-      .voxel_size = {1.0f, 1.0f, 1.0f},
-      .image_size = {160, 160, 240},
+      .voxel_size = {0.5f, 0.5f, 0.5f},
+      .image_size = {320, 320, 400},
   });
 
   renderer.render("mich_recon.image3d");

@@ -135,6 +135,10 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   std::cout << std::format(" {}/{} LORs clipped.\t\t\t", clipped_lor_count, num_lors) << std::flush;
   num_lors -= clipped_lor_count;
 
+  if (num_lors == 0) {
+    return;
+  }
+
   torch::Tensor p0 = torch::from_blob(p0_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
   torch::Tensor p1 = torch::from_blob(p1_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
   torch::Tensor p0u =
