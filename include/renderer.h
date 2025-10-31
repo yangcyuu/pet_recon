@@ -30,7 +30,10 @@ struct RendererParameters {
   size_t batch_size = 32768;
   /** @brief 是否使用 Sobol 低差采样 */
   bool use_sobol = false;
+  /** @brief 是否使用线性采样 */
   bool linear_sampling = false;
+  /** @brief 线性采样步长 */
+  float linear_step = 1.0f;
   /** @brief 学习率 */
   float learning_rate = 1e-3f;
   /** @brief 是否启用 TOF 重要性采样 */
@@ -72,8 +75,9 @@ public:
       _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
       _iter_per_slice(parameters.iter_per_slice), _batch_size(parameters.batch_size), _use_sobol(parameters.use_sobol),
-      _linear_sampling(parameters.linear_sampling), _enable_importance_sampling(parameters.enable_importance_sampling),
-      _tof_sigma(parameters.tof_sigma), _tof_center_offset(parameters.tof_center_offset) {
+      _linear_sampling(parameters.linear_sampling), _linear_step(parameters.linear_step),
+      _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
+      _tof_center_offset(parameters.tof_center_offset) {
     torch::manual_seed(parameters.seed);
   }
 
@@ -102,6 +106,7 @@ private:
   size_t _batch_size = 32768;
   bool _use_sobol = false;
   bool _linear_sampling = false;
+  float _linear_step = 1.0f;
   bool _enable_importance_sampling = false;
   float _tof_sigma = 0.5f;
   float _tof_center_offset = 0;
@@ -131,7 +136,7 @@ private:
   torch::Tensor render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
                                const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,
                                const torch::Tensor &crystal0_samples, const torch::Tensor &crystal1_samples,
-                               const torch::Tensor &tof_samples, const Texture3D &source) const;
+                               torch::Tensor tof_samples, const Texture3D &source) const;
 
 
   torch::Tensor tof_weight(const torch::Tensor &x) const {

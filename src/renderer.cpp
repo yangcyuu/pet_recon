@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <format>
 #include <numbers>
 #include <ranges>
@@ -38,6 +39,8 @@ void Renderer::render(const std::string_view path) {
     torch::Tensor mean_likelihood = likelihood.tensor().mean();
     mean_likelihood.backward();
     Texture3D dldi = source.grad();
+
+    c10::cuda::CUDACachingAllocator::emptyCache();
 
     uniform_result.tensor().mean().backward();
     Texture3D drdi = uniform_source.grad();
@@ -105,34 +108,65 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   p1u_data.reserve(num_lors * 3);
   p1v_data.reserve(num_lors * 3);
 
-  auto crystal_geometries = _mich_crystal.getHCrystalsBatch(lor_indices | std::ranges::to<std::vector<size_t>>());
+  std::vector<size_t> lors;
+  lors.reserve(num_lors);
+  for (size_t i = 0; i < num_lors; ++i) {
+    lors.push_back(lor_indices[i]);
+  }
+
+  auto crystal_geometries = _mich_crystal.getHCrystalsBatch(lors);
 
   const auto &generator = _mich_range_generator;
   size_t clipped_lor_count = 0;
   for (size_t lor_index = 0; lor_index < num_lors; ++lor_index) {
-    size_t bin_index = lor_indices[lor_index] % generator.allBins().size();
-    size_t view_index = lor_indices[lor_index] / generator.allBins().size() % generator.allViews().size();
-    size_t slice_index = lor_indices[lor_index] / (generator.allBins().size() * generator.allViews().size()) %
-                         generator.allSlices().size();
-    const auto &position0 = crystal_geometries[2 * lor_index].O;
-    const auto &position1 = crystal_geometries[2 * lor_index + 1].O;
+    size_t bin_index = lors[lor_index] % generator.allBins().size();
+    size_t view_index = lors[lor_index] / generator.allBins().size() % generator.allViews().size();
+    size_t slice_index =
+        lors[lor_index] / (generator.allBins().size() * generator.allViews().size()) % generator.allSlices().size();
+    auto position0 = crystal_geometries[2 * lor_index].O;
+    auto position1 = crystal_geometries[2 * lor_index + 1].O;
     const auto &direction_u0 = crystal_geometries[2 * lor_index].U;
     const auto &direction_v0 = crystal_geometries[2 * lor_index].V;
     const auto &direction_u1 = crystal_geometries[2 * lor_index + 1].U;
     const auto &direction_v1 = crystal_geometries[2 * lor_index + 1].V;
-    if (!lor_in_image(position0, position1, _voxel_size, _image_size)) {
+    const auto lor_check = lor_in_image(position0, position1, _voxel_size, _image_size);
+    if (!lor_check.has_value()) {
       clipped_lor_count++;
       continue;
     }
+    const auto &[tmin, tmax] = lor_check.value();
+    // Clip the LOR
+    const auto clip_position0 = position0 + (position1 - position0) * tmin;
+    const auto clip_position1 = position0 + (position1 - position0) * tmax;
+    position0 = clip_position0;
+    position1 = clip_position1;
     bin_indices.push_back(static_cast<int64_t>(bin_index));
     view_indices.push_back(static_cast<int64_t>(view_index));
     slice_indices.push_back(static_cast<int64_t>(slice_index));
-    p0_data.insert(p0_data.end(), {position0[0], position0[1], position0[2]});
-    p1_data.insert(p1_data.end(), {position1[0], position1[1], position1[2]});
-    p0u_data.insert(p0u_data.end(), {direction_u0[0], direction_u0[1], direction_u0[2]});
-    p0v_data.insert(p0v_data.end(), {direction_v0[0], direction_v0[1], direction_v0[2]});
-    p1u_data.insert(p1u_data.end(), {direction_u1[0], direction_u1[1], direction_u1[2]});
-    p1v_data.insert(p1v_data.end(), {direction_v1[0], direction_v1[1], direction_v1[2]});
+    // p0_data.insert(p0_data.end(), {position0[0], position0[1], position0[2]});
+    // p1_data.insert(p1_data.end(), {position1[0], position1[1], position1[2]});
+    // p0u_data.insert(p0u_data.end(), {direction_u0[0], direction_u0[1], direction_u0[2]});
+    // p0v_data.insert(p0v_data.end(), {direction_v0[0], direction_v0[1], direction_v0[2]});
+    // p1u_data.insert(p1u_data.end(), {direction_u1[0], direction_u1[1], direction_u1[2]});
+    // p1v_data.insert(p1v_data.end(), {direction_v1[0], direction_v1[1], direction_v1[2]});
+    p0_data.push_back(position0[0]);
+    p0_data.push_back(position0[1]);
+    p0_data.push_back(position0[2]);
+    p1_data.push_back(position1[0]);
+    p1_data.push_back(position1[1]);
+    p1_data.push_back(position1[2]);
+    p0u_data.push_back(direction_u0[0]);
+    p0u_data.push_back(direction_u0[1]);
+    p0u_data.push_back(direction_u0[2]);
+    p0v_data.push_back(direction_v0[0]);
+    p0v_data.push_back(direction_v0[1]);
+    p0v_data.push_back(direction_v0[2]);
+    p1u_data.push_back(direction_u1[0]);
+    p1u_data.push_back(direction_u1[1]);
+    p1u_data.push_back(direction_u1[2]);
+    p1v_data.push_back(direction_v1[0]);
+    p1v_data.push_back(direction_v1[1]);
+    p1v_data.push_back(direction_v1[2]);
   }
 
   std::cout << std::format(" {}/{} LORs clipped.\t\t\t", clipped_lor_count, num_lors) << std::flush;
@@ -182,13 +216,7 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   //[N, N_crystal, N_lor]
   torch::Tensor tof_samples;
 
-  if (_linear_sampling) {
-    tof_samples = torch::linspace(0.0f, 1.0f, _samples_per_lor, device)
-                      .unsqueeze(0)
-                      .unsqueeze(0)
-                      .expand({static_cast<int64_t>(num_lors), static_cast<int64_t>(_samples_per_crystal),
-                               static_cast<int64_t>(_samples_per_lor)});
-  } else {
+  if (!_linear_sampling) {
     tof_samples = torch::rand({static_cast<int64_t>(num_lors), static_cast<int64_t>(_samples_per_crystal),
                                static_cast<int64_t>(_samples_per_lor)},
                               device);
@@ -207,7 +235,7 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
 torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
                                        const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,
                                        const torch::Tensor &crystal0_samples, const torch::Tensor &crystal1_samples,
-                                       const torch::Tensor &tof_samples, const Texture3D &source) const {
+                                       torch::Tensor tof_samples, const Texture3D &source) const {
   torch::Device device = torch::kCUDA;
   int64_t num_lors = p0.size(0);
 
@@ -236,6 +264,22 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
   torch::Tensor length = torch::norm(p1d - p0d, 2, 2, true);
 
   torch::Tensor x; // [N, N_crystal, N_lor]
+  torch::Tensor mask; // [N, N_crystal, N_lor]
+  torch::Tensor actual_samples_num; // [N, N_crystal, 1]
+  size_t actual_samples_per_lor;
+  if (_linear_sampling) {
+    actual_samples_num = torch::ceil(length / _linear_step); // [N, N_crystal, 1]
+    size_t max_samples_num = actual_samples_num.max().item<int64_t>();
+    torch::Tensor sample_indices =
+        torch::arange(0, static_cast<int64_t>(max_samples_num), device)
+            .reshape({1, 1, -1})
+            .expand({num_lors, static_cast<int64_t>(_samples_per_crystal), static_cast<int64_t>(max_samples_num)});
+    mask = sample_indices < actual_samples_num; // [N, N_crystal, N_lor]
+    actual_samples_per_lor = max_samples_num;
+    tof_samples = (sample_indices + 0.5f) / actual_samples_num; // [N, N_crystal, N_lor]
+  } else {
+    actual_samples_per_lor = _samples_per_lor;
+  }
 
   if (_enable_importance_sampling && _tof_sigma > 0) {
     x = gaussian_sample(tof_samples, tof_sigma_t, tof_offset_t);
@@ -261,7 +305,7 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
                             image_size.unsqueeze(0).unsqueeze(0).unsqueeze(0) +
                         0.5f;
 
-  int64_t total_samples = num_lors * _samples_per_crystal * _samples_per_lor;
+  int64_t total_samples = num_lors * _samples_per_crystal * actual_samples_per_lor;
   torch::Tensor coord_flat = coord.reshape({total_samples, 3});
 
 
@@ -270,7 +314,7 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
 
   // [N, N_crystal, N_lor, C]
   torch::Tensor f = f_flat.reshape(
-      {num_lors, static_cast<int64_t>(_samples_per_crystal), static_cast<int64_t>(_samples_per_lor), -1});
+      {num_lors, static_cast<int64_t>(_samples_per_crystal), static_cast<int64_t>(actual_samples_per_lor), -1});
 
   torch::Tensor pdf;
   if (_enable_importance_sampling && _tof_sigma > 0) {
@@ -282,14 +326,21 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
     pdf = pdf.unsqueeze(2); // [N, N_crystal, 1]
   }
 
-  // [N, N_crystal, N_lor, C]
+  // [N, N_crystal, N_lor]
   torch::Tensor tof_w_exp = tof_w.unsqueeze(-1);
   torch::Tensor pdf_exp = pdf.unsqueeze(-1);
-  torch::Tensor weighted = f * tof_w_exp / (pdf_exp + 1e-6f);
+  torch::Tensor weighted = (f * tof_w_exp / (pdf_exp + 1e-6f)).squeeze(-1); // [N, N_crystal, N_lor]
 
+  torch::Tensor lor_mean;
 
-  // [N, N_crystal, C]
-  torch::Tensor lor_mean = weighted.mean(2);
+  if (_linear_sampling) {
+    lor_mean =
+        torch::where(actual_samples_num.squeeze(-1) > 0, (weighted * mask).sum(2) / actual_samples_num.squeeze(-1),
+                     torch::zeros_like(actual_samples_num.squeeze(-1)));
+  } else {
+    lor_mean = weighted.mean(2); // [N, N_crystal]
+  }
+
 
   // [N, C]
   torch::Tensor crystal_mean = lor_mean.mean(1);

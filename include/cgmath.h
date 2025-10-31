@@ -29,10 +29,11 @@ T linear_to_gamma(T value, T gamma = static_cast<T>(2.2)) {
   return LUT[std::clamp<size_t>(std::round(value * 1023), 0, 1023)];
 }
 
-inline bool lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0,
-                         const openpni::experimental::core::Vector<float, 3> &p1,
-                         const openpni::experimental::core::Vector<float, 3> &voxel_size,
-                         const openpni::experimental::core::Vector<float, 3> &image_size) {
+inline std::optional<std::pair<float, float>>
+lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0,
+             const openpni::experimental::core::Vector<float, 3> &p1,
+             const openpni::experimental::core::Vector<float, 3> &voxel_size,
+             const openpni::experimental::core::Vector<float, 3> &image_size) {
   openpni::experimental::core::Vector<float, 3> half_image_size = image_size * 0.5f * voxel_size;
   openpni::experimental::core::Vector<float, 3> min_bound = -half_image_size;
   openpni::experimental::core::Vector<float, 3> max_bound = half_image_size;
@@ -52,7 +53,7 @@ inline bool lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0
 
     if (std::abs(direction) < epsilon) {
       if (origin < min_b || origin > max_b) {
-        return false;
+        return std::nullopt;
       }
     } else {
       float t1 = (min_b - origin) / direction;
@@ -66,10 +67,13 @@ inline bool lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0
       tmax = std::min(tmax, t2);
 
       if (tmin > tmax) {
-        return false;
+        return std::nullopt;
       }
     }
   }
 
-  return (tmin <= tmax) && (tmax >= 0.0f) && (tmin <= 1.0f);
+  if ((tmin <= tmax) && (tmax >= 0.0f) && (tmin <= 1.0f)) {
+    return std::make_pair(tmin, tmax);
+  }
+  return std::nullopt;
 }

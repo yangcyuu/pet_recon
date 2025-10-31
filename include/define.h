@@ -31,7 +31,7 @@ inline openpni::experimental::core::MichDefine D80() {
   polygon.edges = 12;
   polygon.detectorPerEdge = 1;
   polygon.detectorLen = 0;
-  polygon.radius = 53.25;
+  polygon.radius = 52.9;
   polygon.angleOf1stPerp = 0;
   polygon.detectorRings = 1;
   polygon.ringDistance = 26.5 * 4 + 2;
