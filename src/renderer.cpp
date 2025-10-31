@@ -55,6 +55,9 @@ void Renderer::render(const std::string_view path) {
                              dldi.tensor().max().item<float>(), dldi.tensor().mean().item<float>());
     std::cout << std::format("  dr/di min = {:.6f}, max = {:.6f}, mean = {:.6f}\n", drdi.tensor().min().item<float>(),
                              drdi.tensor().max().item<float>(), drdi.tensor().mean().item<float>());
+    std::cout << std::format("  update min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
+                             update.tensor().min().item<float>(), update.tensor().max().item<float>(),
+                             update.tensor().mean().item<float>());
     std::cout << std::format("  likelihood mean = {:.6f}, result min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
                              mean_likelihood.item<float>(), source.tensor().min().item<float>(),
                              source.tensor().max().item<float>(), source.tensor().mean().item<float>());
