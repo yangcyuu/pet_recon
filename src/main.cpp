@@ -5,8 +5,8 @@ int main() {
   auto renderer = Renderer({
       .mich_file = "D80-mouse-mich.dat",
       .offset = 0,
-      .samples_per_crystal = 4,
-      .samples_per_lor = 8,
+      .samples_per_crystal = 1,
+      .samples_per_lor = 40,
       .iter_per_slice = 10,
       // .batch_size = 256,
       .use_sobol = true,

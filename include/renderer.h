@@ -30,6 +30,7 @@ struct RendererParameters {
   size_t batch_size = 32768;
   /** @brief 是否使用 Sobol 低差采样 */
   bool use_sobol = false;
+  bool linear_sampling = false;
   /** @brief 学习率 */
   float learning_rate = 1e-3f;
   /** @brief 是否启用 TOF 重要性采样 */
@@ -71,8 +72,8 @@ public:
       _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
       _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
       _iter_per_slice(parameters.iter_per_slice), _batch_size(parameters.batch_size), _use_sobol(parameters.use_sobol),
-      _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
-      _tof_center_offset(parameters.tof_center_offset) {
+      _linear_sampling(parameters.linear_sampling), _enable_importance_sampling(parameters.enable_importance_sampling),
+      _tof_sigma(parameters.tof_sigma), _tof_center_offset(parameters.tof_center_offset) {
     torch::manual_seed(parameters.seed);
   }
 
@@ -100,6 +101,7 @@ private:
   size_t _iter_per_slice = 10;
   size_t _batch_size = 32768;
   bool _use_sobol = false;
+  bool _linear_sampling = false;
   bool _enable_importance_sampling = false;
   float _tof_sigma = 0.5f;
   float _tof_center_offset = 0;

@@ -180,9 +180,19 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   }
 
   //[N, N_crystal, N_lor]
-  torch::Tensor tof_samples = torch::rand({static_cast<int64_t>(num_lors), static_cast<int64_t>(_samples_per_crystal),
-                                           static_cast<int64_t>(_samples_per_lor)},
-                                          device);
+  torch::Tensor tof_samples;
+
+  if (_linear_sampling) {
+    tof_samples = torch::linspace(0.0f, 1.0f, _samples_per_lor, device)
+                      .unsqueeze(0)
+                      .unsqueeze(0)
+                      .expand({static_cast<int64_t>(num_lors), static_cast<int64_t>(_samples_per_crystal),
+                               static_cast<int64_t>(_samples_per_lor)});
+  } else {
+    tof_samples = torch::rand({static_cast<int64_t>(num_lors), static_cast<int64_t>(_samples_per_crystal),
+                               static_cast<int64_t>(_samples_per_lor)},
+                              device);
+  }
 
   torch::Tensor values =
       render_crystal(p0, p1, p0u, p0v, p1u, p1v, crystal0_samples, crystal1_samples, tof_samples, source); // [N]
