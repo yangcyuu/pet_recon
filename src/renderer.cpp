@@ -117,29 +117,25 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
   auto crystal_geometries = _mich_crystal.getHCrystalsBatch(lors);
 
   const auto &generator = _mich_range_generator;
+  float crystal_size = (_mich_crystal.mich().detector.crystalSizeU + _mich_crystal.mich().detector.crystalSizeV) * 0.5f;
+  Vector3 extend_size = Vector3::create(crystal_size) * 0.5f + Vector3::create(_crystal_sigma) * 3.0f;
   size_t clipped_lor_count = 0;
   for (size_t lor_index = 0; lor_index < num_lors; ++lor_index) {
     size_t bin_index = lors[lor_index] % generator.allBins().size();
     size_t view_index = lors[lor_index] / generator.allBins().size() % generator.allViews().size();
     size_t slice_index =
         lors[lor_index] / (generator.allBins().size() * generator.allViews().size()) % generator.allSlices().size();
-    auto position0 = crystal_geometries[2 * lor_index].O;
-    auto position1 = crystal_geometries[2 * lor_index + 1].O;
+    const auto &position0 = crystal_geometries[2 * lor_index].O;
+    const auto &position1 = crystal_geometries[2 * lor_index + 1].O;
     const auto &direction_u0 = crystal_geometries[2 * lor_index].U;
     const auto &direction_v0 = crystal_geometries[2 * lor_index].V;
     const auto &direction_u1 = crystal_geometries[2 * lor_index + 1].U;
     const auto &direction_v1 = crystal_geometries[2 * lor_index + 1].V;
-    const auto lor_check = lor_in_image(position0, position1, _voxel_size, _image_size);
+    const auto lor_check = lor_in_image(position0, position1, _voxel_size, _image_size, extend_size);
     if (!lor_check.has_value()) {
       clipped_lor_count++;
       continue;
     }
-    const auto &[tmin, tmax] = lor_check.value();
-    // Clip the LOR
-    const auto clip_position0 = position0 + (position1 - position0) * tmin;
-    const auto clip_position1 = position0 + (position1 - position0) * tmax;
-    position0 = clip_position0;
-    position1 = clip_position1;
     bin_indices.push_back(static_cast<int64_t>(bin_index));
     view_indices.push_back(static_cast<int64_t>(view_index));
     slice_indices.push_back(static_cast<int64_t>(slice_index));
@@ -258,6 +254,9 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
   // [N, N_crystal, 3]
   torch::Tensor p0d = p0.unsqueeze(1) + crystal0_offsets_u * p0u.unsqueeze(1) + crystal0_offsets_v * p0v.unsqueeze(1);
   torch::Tensor p1d = p1.unsqueeze(1) + crystal1_offsets_u * p1u.unsqueeze(1) + crystal1_offsets_v * p1v.unsqueeze(1);
+  // [N, N_crystal]
+  torch::Tensor valid_mask;
+  std::tie(p0d, p1d, valid_mask) = clip_lors(p0d, p1d, voxel_size, image_size);
 
 
   // [N, N_crystal, 1]
@@ -341,12 +340,10 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
     lor_mean = weighted.mean(2); // [N, N_crystal]
   }
 
-
-  // [N, C]
-  torch::Tensor crystal_mean = lor_mean.mean(1);
-
+  torch::Tensor valid_crystal_num = valid_mask.to(torch::kFloat32).sum(1); // [N]
   // [N]
-  torch::Tensor result = crystal_mean.squeeze(-1);
+  torch::Tensor crystal_mean = torch::where(valid_crystal_num > 0, (lor_mean * valid_mask).sum(1) / valid_crystal_num,
+                                            torch::zeros_like(valid_crystal_num));
 
-  return result;
+  return crystal_mean;
 }
