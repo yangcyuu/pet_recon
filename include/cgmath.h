@@ -73,7 +73,7 @@ lor_in_image(const openpni::experimental::core::Vector<float, 3> &p0,
     }
   }
 
-  if ((tmin <= tmax) && (tmax >= 0.0f) && (tmin <= 1.0f)) {
+  if ((tmin < tmax) && (tmax >= 0.0f) && (tmin <= 1.0f)) {
     return std::make_pair(tmin, tmax);
   }
   return std::nullopt;
@@ -86,27 +86,33 @@ inline std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> clip_lors(const t
   // p0, p1: [N, N_crystal, 3]
   // voxel_size: [3]
   // image_size: [3]
-  torch::Tensor image_min = -0.5f * voxel_size.unsqueeze(0).unsqueeze(0) * image_size.unsqueeze(0).unsqueeze(0);
-  torch::Tensor image_max = 0.5f * voxel_size.unsqueeze(0).unsqueeze(0) * image_size.unsqueeze(0).unsqueeze(0);
+  torch::Tensor min_bound = -0.5f * voxel_size.unsqueeze(0).unsqueeze(0) * image_size.unsqueeze(0).unsqueeze(0);
+  torch::Tensor max_bound = 0.5f * voxel_size.unsqueeze(0).unsqueeze(0) * image_size.unsqueeze(0).unsqueeze(0);
 
   constexpr float epsilon = 1e-6f;
   constexpr float largest = 1e6f;
   torch::Tensor direction = p1 - p0;
   torch::Tensor abs_direction = torch::abs(direction);
-  // torch::Tensor t0 = (image_min - p0) / (direction + 1e-8f);
-  // torch::Tensor t1 = (image_max - p0) / (direction + 1e-8f);
-  torch::Tensor t0 =
-      torch::where(abs_direction > epsilon, (image_min - p0) / direction, torch::full_like(direction, -largest));
-  torch::Tensor t1 =
-      torch::where(abs_direction > epsilon, (image_max - p0) / direction, torch::full_like(direction, largest));
+  // torch::Tensor t0 = (min_bound - p0) / (direction + 1e-8f);
+  // torch::Tensor t1 = (max_bound - p0) / (direction + 1e-8f);
+  torch::Tensor parallel_mask = abs_direction <= epsilon;
+  torch::Tensor outside_mask = (p0 < min_bound) | (p0 > max_bound);
+  torch::Tensor invalid_parallel = (parallel_mask & outside_mask).any(-1); // [N, N_crystal]
+  torch::Tensor t0 = torch::where(abs_direction > epsilon, (min_bound - p0) / direction,
+                                  torch::copysign(torch::full_like(direction, largest), min_bound - p0));
+  torch::Tensor t1 = torch::where(abs_direction > epsilon, (max_bound - p0) / direction,
+                                  torch::copysign(torch::full_like(direction, largest), max_bound - p0));
 
   torch::Tensor tmin = std::get<0>(torch::min(t0, t1).max(-1)); // [N, N_crystal]
   torch::Tensor tmax = std::get<0>(torch::max(t0, t1).min(-1));
 
-  torch::Tensor valid_mask = (tmin < tmax) & (tmax > 0.0f) & (tmin < 1.0f);
+  torch::Tensor valid_mask = (tmin < tmax) & (tmax >= 0.0f) & (tmin <= 1.0f) & (~invalid_parallel); // [N, N_crystal]
 
   tmin = torch::clamp(tmin.unsqueeze(-1), 0.0f, 1.0f); // [N, N_crystal, 1]
   tmax = torch::clamp(tmax.unsqueeze(-1), 0.0f, 1.0f);
+
+  // torch::Tensor clipped_p0 = p0 + direction * tmin;
+  // torch::Tensor clipped_p1 = p0 + direction * tmax;
 
   torch::Tensor clipped_p0 = p0 + direction * tmin;
   torch::Tensor clipped_p1 = p0 + direction * tmax;

@@ -107,13 +107,12 @@ public:
   }
 
   torch::Tensor eval_coords(const at::Tensor &coords) const {
-    // coord: [N, 2], range [0, 1], (x, y)
+    // coord: [N, 2], range [-1, 1], (x, y)
     auto options = torch::nn::functional::GridSampleFuncOptions()
                        .padding_mode(torch::kZeros)
                        .mode(torch::kBilinear)
-                       .align_corners(false);
+                       .align_corners(true);
     torch::Tensor grid = coords.unsqueeze(0).unsqueeze(2); // [1, N, 1, 2]
-    grid = grid * 2.0 - 1.0; // to [-1, 1]
     torch::Tensor input = _data.unsqueeze(0); // [1, C, H, W]
     torch::Tensor output = torch::nn::functional::grid_sample(input, grid,
                                                               options); // [1, C, N, 1]
@@ -122,13 +121,12 @@ public:
   }
 
   torch::Tensor eval_coord(const at::Tensor &coord) const {
-    // coord: [2], range [0, 1], (x, y)
+    // coord: [2], range [-1, 1], (x, y)
     auto options = torch::nn::functional::GridSampleFuncOptions()
                        .padding_mode(torch::kZeros)
                        .mode(torch::kBilinear)
-                       .align_corners(false);
+                       .align_corners(true);
     torch::Tensor grid = coord.unsqueeze(0).unsqueeze(0).unsqueeze(0); // [1, 1, 1, 2]
-    grid = grid * 2.0 - 1.0; // to [-1, 1]
     torch::Tensor input = _data.unsqueeze(0); // [1, C, H, W]
     torch::Tensor output = torch::nn::functional::grid_sample(input, grid,
                                                               options); // [1, C, 1, 1]
@@ -248,6 +246,16 @@ public:
     return const_cast<Texture3D &>(*this);
   }
 
+  Texture3D &mul_(const Texture3D &other) const {
+    MARK_AS_UNUSED(this->_data.mul_(other._data));
+    return const_cast<Texture3D &>(*this);
+  }
+
+  Texture3D &div_(const Texture3D &other) const {
+    MARK_AS_UNUSED(this->_data.div_(other._data));
+    return const_cast<Texture3D &>(*this);
+  }
+
   template<typename T>
   Texture3D &clamp_(const T &min_value, const T &max_value) const {
     MARK_AS_UNUSED(this->_data.clamp_(min_value, max_value));
@@ -267,13 +275,12 @@ public:
   }
 
   torch::Tensor eval_coords(const at::Tensor &coords) const {
-    // coord: [N, 3], range [0, 1], (x, y, z)
+    // coord: [N, 3], range [-1, 1], (x, y, z)
     auto options = torch::nn::functional::GridSampleFuncOptions()
                        .padding_mode(torch::kZeros)
                        .mode(torch::kBilinear)
-                       .align_corners(false);
+                       .align_corners(true);
     torch::Tensor grid = coords.unsqueeze(0).unsqueeze(2).unsqueeze(2); // [1, N, 1, 1, 3]
-    grid = grid * 2.0 - 1.0; // to [-1, 1]
     torch::Tensor input = _data.unsqueeze(0); // [1, C, D, H, W]
     torch::Tensor output = torch::nn::functional::grid_sample(input, grid,
                                                               options); // [1, C, N, 1, 1]
@@ -282,13 +289,12 @@ public:
   }
 
   torch::Tensor eval_coord(const at::Tensor &coord) const {
-    // coord: [3], range [0, 1], (x, y, z)
+    // coord: [3], range [-1, 1], (x, y, z)
     auto options = torch::nn::functional::GridSampleFuncOptions()
                        .padding_mode(torch::kZeros)
                        .mode(torch::kBilinear)
-                       .align_corners(false);
+                       .align_corners(true);
     torch::Tensor grid = coord.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0); // [1, 1, 1, 1, 3]
-    grid = grid * 2.0 - 1.0; // to [-1, 1]
     torch::Tensor input = _data.unsqueeze(0); // [1, C, D, H, W]
     torch::Tensor output = torch::nn::functional::grid_sample(input, grid,
                                                               options); // [1, C, 1, 1]
@@ -333,7 +339,7 @@ public:
 
   void save(const std::string &filename) const;
 
-  void save_rawdata(const std::string_view filename) const;
+  void save_rawdata(std::string_view filename) const;
 
 private:
   torch::Tensor _data;

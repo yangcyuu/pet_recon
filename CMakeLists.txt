@@ -37,6 +37,7 @@ enable_language(CXX CUDA)
 set(LIBTORCH_CMAKE_PREFIX "/opt/libtorch/share/cmake/Torch")
 set(CUDA_INCLUDE_DIR "/opt/cuda/include")
 set(CUDA_CCCL_INCLUDE_DIR "/opt/cuda/targets/x86_64-linux/include/cccl")
+set(CUDA_LINUX_INCLUDE_DIR "/opt/cuda/targets/x86_64-linux/include")
 set(CUDA_LIBRARY_DIR "/opt/cuda/lib64")
 
 set(CUDA_NVRTC_SHORTHASH 1)
@@ -85,4 +86,21 @@ target_link_libraries(pet_recon PRIVATE
 target_sources(pet_recon PRIVATE
         ${CXX_SOURCES}
         ${CXX_HEADERS}
+)
+find_library(CUDA_CUDART_LIBRARY cudart HINTS /opt/cuda/targets/x86_64-linux/lib)
+
+
+add_executable(pni_recon
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/pni-standard-project/manual-test/Recon/overall_osem_simple_gpu.cpp
+)
+
+target_include_directories(pni_recon PRIVATE
+        ${CUDA_LINUX_INCLUDE_DIR}
+)
+
+target_link_libraries(pni_recon PRIVATE
+        Threads::Threads
+        pni
+        pni_cu
+        ${CUDA_CUDART_LIBRARY}
 )

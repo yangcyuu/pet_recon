@@ -16,8 +16,20 @@ struct RendererParameters {
 
   /** @brief 输入 MICH 数据文件路径 */
   std::string_view mich_file;
+  /** @brief 输入 MICH 延迟数据文件路径 */
+  std::string_view mich_delay_file;
+  /** @brief 输入 MICH 衰减数据文件路径 */
+  std::string_view mich_attn_file;
+  /** @brief 输入 MICH 标准化数据文件路径 */
+  std::string_view mich_norm_file;
   /** @brief 文件偏移（用于跳过前部数据） */
   std::ifstream::off_type offset = 0;
+  /** @brief 延迟文件偏移（用于跳过前部数据） */
+  std::ifstream::off_type delay_offset = 0;
+  /** @brief 衰减文件偏移（用于跳过前部数据） */
+  std::ifstream::off_type attn_offset = 0;
+  /** @brief 标准化文件偏移（用于跳过前部数据） */
+  std::ifstream::off_type norm_offset = 0;
   /** @brief 晶体位置采样标准差 */
   float crystal_sigma = 0.1f;
   /** @brief 每个晶体的采样 sub-LOR 数量 */
@@ -79,6 +91,36 @@ public:
       _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
       _tof_center_offset(parameters.tof_center_offset) {
     torch::manual_seed(parameters.seed);
+    if (!parameters.mich_delay_file.empty()) {
+      _mich_delay = RawPETData<float>::from_file(
+          parameters.mich_delay_file,
+          {
+              .num_bins = _mich_range_generator.allBins().size(),
+              .num_views = _mich_range_generator.allViews().size(),
+              .num_slices = _mich_range_generator.allSlices().size(),
+          },
+          parameters.delay_offset);
+    }
+    if (!parameters.mich_attn_file.empty()) {
+      _mich_attn = RawPETData<float>::from_file(
+          parameters.mich_attn_file,
+          {
+              .num_bins = _mich_range_generator.allBins().size(),
+              .num_views = _mich_range_generator.allViews().size(),
+              .num_slices = _mich_range_generator.allSlices().size(),
+          },
+          parameters.attn_offset);
+    }
+    if (!parameters.mich_norm_file.empty()) {
+      _mich_norm = RawPETData<float>::from_file(
+          parameters.mich_norm_file,
+          {
+              .num_bins = _mich_range_generator.allBins().size(),
+              .num_views = _mich_range_generator.allViews().size(),
+              .num_slices = _mich_range_generator.allSlices().size(),
+          },
+          parameters.norm_offset);
+    }
   }
 
   void render(std::string_view path = {});
@@ -88,11 +130,10 @@ public:
 
 private:
   RangeGenerator _mich_range_generator = RangeGenerator::create(E180());
-  RawPETData<float> _mich = {
-      _mich_range_generator.allBins().size(),
-      _mich_range_generator.allViews().size(),
-      _mich_range_generator.allSlices().size(),
-  };
+  RawPETData<float> _mich;
+  RawPETData<float> _mich_delay;
+  RawPETData<float> _mich_attn;
+  RawPETData<float> _mich_norm;
 
   MichCrystal _mich_crystal = MichCrystal(E180());
 
@@ -124,19 +165,21 @@ private:
 
   SobolEngine _crystal0_sobol = SobolEngine(3, true);
   SobolEngine _crystal1_sobol = SobolEngine(3, true);
+  SobolEngine _linear_tof_sobol = SobolEngine(1, true);
 
   // void render_crystal(const CrystalGeometry &start, const CrystalGeometry &end,
   //                     size_t bin_index, size_t view_index,
   //                     const Texture3D &source, DiffImage2D<float> &result);
 
   template<std::ranges::view T>
-  void render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture3D &result,
+  bool render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture3D &result,
                   Texture3D &uniform_result);
 
   torch::Tensor render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
-                               const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,
+                               const torch::Tensor &p0v, const torch::Tensor &p0n, const torch::Tensor &p1u,
+                               const torch::Tensor &p1v, const torch::Tensor &p1n,
                                const torch::Tensor &crystal0_samples, const torch::Tensor &crystal1_samples,
-                               torch::Tensor tof_samples, const Texture3D &source) const;
+                               torch::Tensor tof_samples, const Texture3D &source);
 
 
   torch::Tensor tof_weight(const torch::Tensor &x) const {

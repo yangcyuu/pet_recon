@@ -17,6 +17,7 @@ include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${CUDA_INCLUDE_DIR})
 include_directories(${CUDA_CCCL_INCLUDE_DIR})
+include_directories(${CUDA_LINUX_INCLUDE_DIR})
 
 set(APP_DIR ${PROJECT_SOURCE_DIR}/app)
 set(RELEASE_DIR ${PROJECT_SOURCE_DIR}/release)
@@ -58,7 +59,7 @@ if(PNI_STANDARD_CONFIG_DISABLE_CUDA EQUAL 0)
   set(CUDA_PNI_LINK_FLAGS
       "-l${CUDA_PNI_LIB} -L${CUDA_LIBRARY_DIR} -lcudart -lcufft")
   set(CUDA_LIB "-L${CUDA_LIBRARY_DIR} -lcudart")
-  set(CUDA_INCLUDE "-I${CUDA_INCLUDE_DIR}")
+  set(CUDA_INCLUDE "-I${CUDA_INCLUDE_DIR} -I${CUDA_LINUX_INCLUDE_DIR}")
 endif()
 
 set(APP_AQST "pni-aqst")

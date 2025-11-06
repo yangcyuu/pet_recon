@@ -10,43 +10,107 @@ void Renderer::render(const std::string_view path) {
     _curr_iter = iter;
     const auto &generator = _mich_range_generator;
     auto lors = generator.allLORs();
+    size_t total_lors = std::ranges::distance(lors);
     Texture3D target = _mich.texture().tensor().to(torch::kCUDA); // [1, D, H, W]
+
+    Texture3D delay;
+    if (!_mich_delay.empty()) {
+      delay = _mich_delay.texture().tensor().to(torch::kCUDA);
+    }
+
+    // if (!_mich_delay.empty()) {
+    //   MARK_AS_UNUSED(target.sub_(delay).clamp_min_(0.0f));
+    // }
+
+    Texture3D attn;
+    if (!_mich_attn.empty()) {
+      attn = _mich_attn.texture().tensor().to(torch::kCUDA);
+    }
+
+    Texture3D norm;
+    if (!_mich_norm.empty()) {
+      norm = _mich_norm.texture().tensor().to(torch::kCUDA);
+    }
+
 
     Texture3D &source = _final_result;
     source.set_requires_grad(true);
-    source.zero_grad();
 
     Texture3D &uniform_source = _uniform_result;
     uniform_source.set_requires_grad(true);
-    uniform_source.zero_grad();
 
-    Texture3D result(generator.allBins().size(), generator.allViews().size(), generator.allSlices().size(), 1,
-                     torch::kCUDA);
-
-    Texture3D uniform_result(generator.allBins().size(), generator.allViews().size(), generator.allSlices().size(), 1,
-                             torch::kCUDA);
-
-    size_t batch_num = (std::ranges::distance(lors) + _batch_size - 1) / _batch_size;
+    Texture3D dldi(0.0f, source.width(), source.height(), source.depth(), source.channel(), torch::kCUDA);
+    Texture3D drdi(0.0f, source.width(), source.height(), source.depth(), source.channel(), torch::kCUDA);
+    // Texture3D result_for_log(0.0f, generator.allBins().size(), generator.allViews().size(),
+    // generator.allSlices().size(), 1,
+    //                          torch::kCUDA);
+    // Texture3D corrected_result_for_log(0.0f, generator.allBins().size(), generator.allViews().size(),
+    //                                      generator.allSlices().size(), 1, torch::kCUDA);
+    size_t batch_num = (total_lors + _batch_size - 1) / _batch_size;
     for (size_t batch_index = 0; batch_index < batch_num; ++batch_index) {
       size_t begin_index = batch_index * _batch_size;
-      size_t end_index = std::min<size_t>(begin_index + _batch_size, std::ranges::distance(lors));
+      size_t end_index = std::min<size_t>(begin_index + _batch_size, total_lors);
       auto lors_batch = lors | std::views::drop(begin_index) | std::views::take(end_index - begin_index);
-      std::cout << std::format("\r  Processing batch {}/{}...", batch_index + 1, batch_num);
-      render_lor(lors_batch, source, uniform_source, result, uniform_result);
+
+      Texture3D result(0.0f, generator.allBins().size(), generator.allViews().size(), generator.allSlices().size(), 1,
+                       torch::kCUDA);
+      Texture3D uniform_result(0.0f, generator.allBins().size(), generator.allViews().size(),
+                               generator.allSlices().size(), 1, torch::kCUDA);
+
+      std::cout << std::format("\r  Processing batch {}/{}...\t", batch_index + 1, batch_num);
+      if (!render_lor(lors_batch, source, uniform_source, result, uniform_result)) {
+        continue;
+      }
+      // {
+      //   torch::NoGradGuard no_grad;
+      //   MARK_AS_UNUSED(result_for_log.add_(result));
+      // }
+      if (!_mich_delay.empty()) {
+        MARK_AS_UNUSED(result.add_(delay));
+        MARK_AS_UNUSED(uniform_result.add_(delay));
+      }
+      if (!_mich_attn.empty()) {
+        MARK_AS_UNUSED(result.mul_(attn));
+        MARK_AS_UNUSED(uniform_result.mul_(attn));
+      }
+      if (!_mich_norm.empty()) {
+        // MARK_AS_UNUSED(result.div_(torch::where(norm.tensor() != 0.0f, norm.tensor(),
+        // torch::ones_like(norm.tensor()))));
+        MARK_AS_UNUSED(result.mul_(norm));
+        MARK_AS_UNUSED(uniform_result.mul_(norm));
+      }
+
+
+      source.zero_grad();
+      // Texture3D likelihood = target * result.clamp_min(1e-8f).log() - result;
+      Texture3D likelihood = torch::where(result.tensor() > 1e-8, (target * result.log() - result).tensor(),
+                                          torch::zeros_like(result.tensor()));
+      torch::Tensor sum_likelihood = likelihood.tensor().sum();
+      sum_likelihood.backward();
+      Texture3D dldi_batch = source.grad();
+
+      // CHECK_TENSOR_NAN(dldi_batch.tensor(), "dL/di tensor contains NaN values");
+
+      uniform_source.zero_grad();
+      uniform_result.tensor().sum().backward();
+      Texture3D drdi_batch = uniform_source.grad();
+
+      // CHECK_TENSOR_NAN(drdi_batch.tensor(), "dR/di tensor contains NaN values");
+
+      torch::NoGradGuard no_grad;
+      MARK_AS_UNUSED(dldi.add_(torch::where(torch::isnan(dldi_batch.tensor()), torch::zeros_like(dldi_batch.tensor()),
+                                            dldi_batch.tensor())));
+      MARK_AS_UNUSED(drdi.add_(torch::where(torch::isnan(drdi_batch.tensor()), torch::zeros_like(drdi_batch.tensor()),
+                                            drdi_batch.tensor())));
+      // MARK_AS_UNUSED(corrected_result_for_log.add_(result));
+      std::cout << std::format("  likelihood sum = {:.6f}", sum_likelihood.item<float>()) << std::flush;
     }
 
-    Texture3D likelihood = target * result.clamp_min(1e-8f).log() - result;
-    torch::Tensor mean_likelihood = likelihood.tensor().mean();
-    mean_likelihood.backward();
-    Texture3D dldi = source.grad();
-
-    c10::cuda::CUDACachingAllocator::emptyCache();
-
-    uniform_result.tensor().mean().backward();
-    Texture3D drdi = uniform_source.grad();
-
     torch::NoGradGuard no_grad;
+    // drdi /= static_cast<float>(total_lors);
+    // dldi /= static_cast<float>(total_lors);
     Texture3D g = torch::where(drdi.tensor() > 1e-6f, (dldi / drdi).tensor(), torch::zeros_like(drdi.tensor()));
+
     // Texture3D update =
     //     torch::where(source.tensor() != 0.0f, (source * g).tensor(), source.tensor().mean() * g.tensor());
     Texture3D update = source * g;
@@ -61,9 +125,17 @@ void Renderer::render(const std::string_view path) {
     std::cout << std::format("  update min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
                              update.tensor().min().item<float>(), update.tensor().max().item<float>(),
                              update.tensor().mean().item<float>());
-    std::cout << std::format("  likelihood mean = {:.6f}, result min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
-                             mean_likelihood.item<float>(), source.tensor().min().item<float>(),
-                             source.tensor().max().item<float>(), source.tensor().mean().item<float>());
+    // std::cout << std::format("  likelihood mean = {:.6f}, result min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
+    //                          mean_likelihood.item<float>(), source.tensor().min().item<float>(),
+    //                          source.tensor().max().item<float>(), source.tensor().mean().item<float>());
+    std::cout << std::format("  result min = {:.6f}, max = {:.6f}, mean = {:.6f}\n",
+                             source.tensor().min().item<float>(), source.tensor().max().item<float>(),
+                             source.tensor().mean().item<float>());
+
+    // if ((iter + 1) % 5 == 0) {
+    //   result_for_log.save_rawdata(std::format("log/result/iter_{:03}_raw.image3d", iter + 1));
+    //   corrected_result_for_log.save_rawdata(std::format("log/result/iter_{:03}_corrected.image3d", iter + 1));
+    // }
 
     save(std::format("log/iter_{:03}_result.image3d", iter + 1));
   });
@@ -75,7 +147,7 @@ void Renderer::render(const std::string_view path) {
 
 
 template<std::ranges::view T>
-void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source,
+bool Renderer::render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source,
                           Texture3D &result, Texture3D &uniform_result) {
   torch::Device device = torch::kCUDA;
   size_t num_lors = std::ranges::distance(lor_indices);
@@ -165,11 +237,11 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
     p1v_data.push_back(direction_v1[2]);
   }
 
-  std::cout << std::format(" {}/{} LORs clipped.\t\t\t", clipped_lor_count, num_lors) << std::flush;
+  std::cout << std::format(" {}/{} LORs clipped.\t", clipped_lor_count, num_lors);
   num_lors -= clipped_lor_count;
 
   if (num_lors == 0) {
-    return;
+    return false;
   }
 
   torch::Tensor p0 = torch::from_blob(p0_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
@@ -178,10 +250,12 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
       torch::from_blob(p0u_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
   torch::Tensor p0v =
       torch::from_blob(p0v_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
+  torch::Tensor p0n = 2.0f * torch::cross(p0u, p0v, 1); // [N, 3]
   torch::Tensor p1u =
       torch::from_blob(p1u_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
   torch::Tensor p1v =
       torch::from_blob(p1v_data.data(), {static_cast<int64_t>(num_lors), 3}, torch::kFloat32).to(device);
+  torch::Tensor p1n = 2.0f * torch::cross(p1u, p1v, 1); // [N, 3]
 
 
   torch::Tensor bin_idx =
@@ -218,20 +292,22 @@ void Renderer::render_lor(const T &lor_indices, const Texture3D &source, const T
                               device);
   }
 
-  torch::Tensor values =
-      render_crystal(p0, p1, p0u, p0v, p1u, p1v, crystal0_samples, crystal1_samples, tof_samples, source); // [N]
+  torch::Tensor values = render_crystal(p0, p1, p0u, p0v, p0n, p1u, p1v, p1n, crystal0_samples, crystal1_samples,
+                                        tof_samples, source); // [N]
   result.assign(slice_idx, view_idx, bin_idx, torch::zeros_like(bin_idx), values);
 
-  torch::Tensor uniform_values = render_crystal(p0, p1, p0u, p0v, p1u, p1v, crystal0_samples, crystal1_samples,
-                                                tof_samples, uniform_source); // [N]
+  torch::Tensor uniform_values = render_crystal(p0, p1, p0u, p0v, p0n, p1u, p1v, p1n, crystal0_samples,
+                                                crystal1_samples, tof_samples, uniform_source); // [N]
   uniform_result.assign(slice_idx, view_idx, bin_idx, torch::zeros_like(bin_idx), uniform_values);
+  return true;
 }
 
 
 torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
-                                       const torch::Tensor &p0v, const torch::Tensor &p1u, const torch::Tensor &p1v,
+                                       const torch::Tensor &p0v, const torch::Tensor &p0n, const torch::Tensor &p1u,
+                                       const torch::Tensor &p1v, const torch::Tensor &p1n,
                                        const torch::Tensor &crystal0_samples, const torch::Tensor &crystal1_samples,
-                                       torch::Tensor tof_samples, const Texture3D &source) const {
+                                       torch::Tensor tof_samples, const Texture3D &source) {
   torch::Device device = torch::kCUDA;
   int64_t num_lors = p0.size(0);
 
@@ -248,19 +324,28 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
 
   torch::Tensor crystal0_offsets_u = crystal0_offsets.select(-1, 0).unsqueeze(-1); // [N, N_crystal, 1]
   torch::Tensor crystal0_offsets_v = crystal0_offsets.select(-1, 1).unsqueeze(-1);
+  torch::Tensor crystal0_offsets_n = crystal0_offsets.select(-1, 2).unsqueeze(-1);
   torch::Tensor crystal1_offsets_u = crystal1_offsets.select(-1, 0).unsqueeze(-1); // [N, N_crystal, 1]
   torch::Tensor crystal1_offsets_v = crystal1_offsets.select(-1, 1).unsqueeze(-1);
+  torch::Tensor crystal1_offsets_n = crystal1_offsets.select(-1, 2).unsqueeze(-1);
 
   // [N, N_crystal, 3]
-  torch::Tensor p0d = p0.unsqueeze(1) + crystal0_offsets_u * p0u.unsqueeze(1) + crystal0_offsets_v * p0v.unsqueeze(1);
-  torch::Tensor p1d = p1.unsqueeze(1) + crystal1_offsets_u * p1u.unsqueeze(1) + crystal1_offsets_v * p1v.unsqueeze(1);
+  torch::Tensor p0d = p0.unsqueeze(1) + crystal0_offsets_u * p0u.unsqueeze(1) + crystal0_offsets_v * p0v.unsqueeze(1) +
+                      crystal0_offsets_n * p0n.unsqueeze(1);
+  torch::Tensor p1d = p1.unsqueeze(1) + crystal1_offsets_u * p1u.unsqueeze(1) + crystal1_offsets_v * p1v.unsqueeze(1) +
+                      crystal1_offsets_n * p1n.unsqueeze(1);
   // [N, N_crystal]
   torch::Tensor valid_mask;
-  std::tie(p0d, p1d, valid_mask) = clip_lors(p0d, p1d, voxel_size, image_size);
+  if (!_enable_importance_sampling || _tof_sigma == 0) {
+    std::tie(p0d, p1d, valid_mask) = clip_lors(p0d, p1d, voxel_size, image_size);
+  } else {
+    valid_mask =
+        torch::ones({num_lors, static_cast<int64_t>(_samples_per_crystal)}, torch::dtype(torch::kBool).device(device));
+  }
 
 
   // [N, N_crystal, 1]
-  torch::Tensor length = torch::norm(p1d - p0d, 2, 2, true);
+  torch::Tensor length = torch::norm(p1d - p0d, 2, 2, true).clamp_min_(1e-6f);
 
   torch::Tensor x; // [N, N_crystal, N_lor]
   torch::Tensor mask; // [N, N_crystal, N_lor]
@@ -275,7 +360,11 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
             .expand({num_lors, static_cast<int64_t>(_samples_per_crystal), static_cast<int64_t>(max_samples_num)});
     mask = sample_indices < actual_samples_num; // [N, N_crystal, N_lor]
     actual_samples_per_lor = max_samples_num;
-    tof_samples = (sample_indices + 0.5f) / actual_samples_num; // [N, N_crystal, N_lor]
+    // tof_samples = (sample_indices + 0.5f) / actual_samples_num; // [N, N_crystal, N_lor]
+    tof_samples = (sample_indices + _linear_tof_sobol.draw(_samples_per_crystal)
+                                        .reshape({1, static_cast<int64_t>(_samples_per_crystal), -1})
+                                        .to(device)) /
+                  actual_samples_num; // [N, N_crystal, N_lor]
   } else {
     actual_samples_per_lor = _samples_per_lor;
   }
@@ -300,9 +389,8 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
   torch::Tensor tof_w = tof_weight(dist);
 
   // [N, N_crystal, N_lor, 3]
-  torch::Tensor coord = (pos / voxel_size.unsqueeze(0).unsqueeze(0).unsqueeze(0) + 0.5f) /
-                            image_size.unsqueeze(0).unsqueeze(0).unsqueeze(0) +
-                        0.5f;
+  // Normalize to [-1, 1]
+  torch::Tensor coord = pos / (voxel_size * image_size).unsqueeze(0).unsqueeze(0).unsqueeze(0) * 2.0f;
 
   int64_t total_samples = num_lors * _samples_per_crystal * actual_samples_per_lor;
   torch::Tensor coord_flat = coord.reshape({total_samples, 3});
@@ -327,23 +415,20 @@ torch::Tensor Renderer::render_crystal(const torch::Tensor &p0, const torch::Ten
 
   // [N, N_crystal, N_lor]
   torch::Tensor tof_w_exp = tof_w.unsqueeze(-1);
-  torch::Tensor pdf_exp = pdf.unsqueeze(-1);
-  torch::Tensor weighted = (f * tof_w_exp / (pdf_exp + 1e-6f)).squeeze(-1); // [N, N_crystal, N_lor]
+  torch::Tensor pdf_exp = pdf.unsqueeze(-1).clamp_min_(1e-6f);
+  torch::Tensor weighted = (f * tof_w_exp / pdf_exp).squeeze(-1); // [N, N_crystal, N_lor]
 
-  torch::Tensor lor_mean;
-
+  torch::Tensor result;
   if (_linear_sampling) {
-    lor_mean =
-        torch::where(actual_samples_num.squeeze(-1) > 0, (weighted * mask).sum(2) / actual_samples_num.squeeze(-1),
-                     torch::zeros_like(actual_samples_num.squeeze(-1)));
+    torch::Tensor weighted_sum = (weighted * mask * valid_mask.unsqueeze(-1)).sum(2).sum(1);
+    torch::Tensor normalizer = (actual_samples_num.squeeze(-1) * valid_mask).sum(1);
+    result = torch::where(normalizer > 0, weighted_sum / normalizer, torch::zeros_like(normalizer));
   } else {
-    lor_mean = weighted.mean(2); // [N, N_crystal]
+    torch::Tensor lor_mean = weighted.mean(2); // [N, N_crystal]
+    torch::Tensor valid_crystal_nums = valid_mask.to(torch::kFloat32).sum(1); // [N]
+    result = torch::where(valid_crystal_nums > 0, (lor_mean * valid_mask).sum(1) / valid_crystal_nums,
+                          torch::zeros_like(valid_crystal_nums));
   }
 
-  torch::Tensor valid_crystal_num = valid_mask.to(torch::kFloat32).sum(1); // [N]
-  // [N]
-  torch::Tensor crystal_mean = torch::where(valid_crystal_num > 0, (lor_mean * valid_mask).sum(1) / valid_crystal_num,
-                                            torch::zeros_like(valid_crystal_num));
-
-  return crystal_mean;
+  return result;
 }

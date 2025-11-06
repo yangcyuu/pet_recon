@@ -24,6 +24,8 @@ using F32RawPETData = RawPETData<float>;
 template<typename T>
 class RawPETData {
 public:
+  RawPETData() = default;
+
   explicit RawPETData(const RawPETDataParameters &parameters) :
       _num_bins(parameters.num_bins), _num_views(parameters.num_views), _num_slices(parameters.num_slices) {
     if (_num_bins == 0 || _num_views == 0 || _num_slices == 0) {
@@ -123,6 +125,8 @@ public:
 
   const T *data() const { return _data.get(); }
   T *data() { return _data.get(); }
+
+  bool empty() const { return _data == nullptr; }
 
   size_t num_bins() const { return _num_bins; }
   size_t num_views() const { return _num_views; }

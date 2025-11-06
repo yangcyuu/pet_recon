@@ -1,11 +1,14 @@
 #include <iostream>
 
+#include "PnI-Config.hpp"
 #include "../public.hpp"
-#include "include/experimental/example/SimplyRecon.hpp"
-#include "include/experimental/node/GaussConv3D.hpp"
-#include "src/experimental/impl/MichAttnImpl.hpp"
-#include "src/experimental/impl/MichNormImpl.hpp"
-#include "src/experimental/impl/Random.h"
+#include "experimental/tools/Parallel.hpp"
+#include "experimental/core/Image.hpp"
+#include "experimental/example/SimplyRecon.hpp"
+#include "experimental/node/GaussConv3D.hpp"
+// #include "experimental/impl/MichAttnImpl.hpp"
+// #include "experimental/impl/MichNormImpl.hpp"
+// #include "experimental/impl/Random.h"
 using namespace openpni::experimental;
 constexpr int minSectorDifference{4};
 constexpr int radialModuleNumS{6};
@@ -27,23 +30,21 @@ int main() {
   // notice::no deadtime data so we dont do dt corrections
 
   // files
-  std::string in_prompt = "/home/ustc/PETLAB-Software/LGX_TEST/Data/20250826_recontestdata/FIN_WellCounter/"
-                          "Slices_of_PET4643_2025-04-10-14-59-57/Slice4796/coin_all.image3d";
-  std::string in_delay = "/home/ustc/PETLAB-Software/LGX_TEST/Data/20250826_recontestdata/FIN_WellCounter/"
-                         "Slices_of_PET4643_2025-04-10-14-59-57/Slice4796/delay_all.image3d";
+  std::string in_prompt = "graphic_test/coin_all.image3d";
+  std::string in_delay = "20251103_wellcounterdata/Slice4798/delay_all.image3d";
   std::string in_attnMap =
-      "/home/ustc/PETLAB-Software/LGX_TEST/Data/20250826_recontestdata/FIN_WellCounter/CTRecon4888/ct_attn_img.dat";
+      "20251103_wellcounterdata/CTRecon4888/ct_attn_img.dat";
 
   auto promptData = read_from_file<float>(in_prompt, michInfo.getMichSize(), 6);
-  auto delayData = read_from_file<float>(in_delay, michInfo.getMichSize(), 6);
+  // auto delayData = read_from_file<float>(in_delay, michInfo.getMichSize(), 6);
   auto attnMapData = read_from_file<float>(in_attnMap, attnGrids.totalSize(), 6);
 
   //===== generateCorrections
   // 1.norm
   openpni::experimental::node::MichNormalization norm(polygonSys);
   // set norm parameters
-  norm.recoverFromFile("/home/ustc/pni_core/new/pni-standard-project/manual-test/Normalization/test/norm_factors.dat");
-  norm.bindSelfNormMich(delayData.get());
+  // norm.recoverFromFile("graphic_test/normCoff.bin");
+  // norm.bindSelfNormMich(delayData.get());
   // 2.attn
   openpni::experimental::node::MichAttn attn(polygonSys);
   attn.setFetchMode(node::MichAttn::FromPreBaked);
@@ -54,25 +55,25 @@ int main() {
   // 3.random
   openpni::experimental::node::MichRandom rand(polygonSys);
   // rand.setBadChannelThreshold(BadChannelThreshold); no badchannel in random
-  rand.setMinSectorDifference(minSectorDifference);
-  rand.setRadialModuleNumS(radialModuleNumS);
-  rand.setDelayMich(delayData.get());
+  // rand.setMinSectorDifference(minSectorDifference);
+  // rand.setRadialModuleNumS(radialModuleNumS);
+  // rand.setDelayMich(delayData.get());
   // 4.scatter
-  openpni::experimental::node::MichScatter scatter(polygonSys);
-  scatter.setMinSectorDifference(minSectorDifference);
-  scatter.setTailFittingThreshold(taiFittingThreshold);
-  scatter.setScatterPointsThreshold(scatterPointsThreshold);
-  scatter.setScatterEnergyWindow(scatterEnergyWindow);
-  scatter.setScatterEffTableEnergy(scatterEffTableEnergy);
-  scatter.bindAttnCoff(&attn);
-  scatter.bindNorm(&norm);
-  scatter.bindRandom(&rand);
-  scatter.bindHPromptMich(promptData.get());
-  scatter.bindHEmissionMap(osemGrids, nullptr);
+  // openpni::experimental::node::MichScatter scatter(polygonSys);
+  // scatter.setMinSectorDifference(minSectorDifference);
+  // scatter.setTailFittingThreshold(taiFittingThreshold);
+  // scatter.setScatterPointsThreshold(scatterPointsThreshold);
+  // scatter.setScatterEnergyWindow(scatterEnergyWindow);
+  // scatter.setScatterEffTableEnergy(scatterEffTableEnergy);
+  // scatter.bindAttnCoff(&attn);
+  // scatter.bindNorm(&norm);
+  // scatter.bindRandom(&rand);
+  // scatter.bindHPromptMich(promptData.get());
+  // scatter.bindHEmissionMap(osemGrids, nullptr);
   //===== recon
   example::OSEM_params params;
   params.binCutRatio = 0.15f;
-  params.iterNum = 1;
+  params.iterNum = 10;
   params.sample_rate = 0.5f;
   params.subsetNum = 1;
   params.scatterSimulations = 1;
@@ -81,13 +82,13 @@ int main() {
   conv3D.setHWHM(1.f); // 1.0 mm
 
   std::unique_ptr<float[]> outImg = std::make_unique_for_overwrite<float[]>(osemGrids.totalSize());
-#define CALI 1
+#define CALI 0
 #if CALI
   example::instant_OSEM_mich_CUDA(core::Image3DOutput<float>{osemGrids, outImg.get()}, params, conv3D, promptData.get(),
                                   &norm, &rand, &scatter, &attn, polygonSys);
 #else
   example::instant_OSEM_mich_CUDA(core::Image3DOutput<float>{osemGrids, outImg.get()}, params, conv3D, promptData.get(),
-                                  nullptr, nullptr, nullptr, nullptr, polygonSys);
+                                  nullptr, nullptr, nullptr, &attn, polygonSys);
 #endif
 
   std::cout << "OSEM done\n";

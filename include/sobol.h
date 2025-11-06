@@ -22,8 +22,9 @@ struct SobolEngine {
     _first = (_aquisition / (1LL << MAXBIT)).reshape({1, -1});
   }
 
-  torch::Tensor draw(int64_t n, torch::ScalarType dtype = torch::kFloat32) {
+  torch::Tensor draw(int64_t n = 1, torch::ScalarType dtype = torch::kFloat32) {
     TORCH_CHECK(n >= 0, "Number of samples must be non-negative");
+    // [n, dimension]
     torch::Tensor result;
 
     if (_num_generated == 0) {
