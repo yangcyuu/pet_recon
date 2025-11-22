@@ -17,7 +17,6 @@ include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${CUDA_INCLUDE_DIR})
 include_directories(${CUDA_CCCL_INCLUDE_DIR})
-include_directories(${CUDA_LINUX_INCLUDE_DIR})
 
 set(APP_DIR ${PROJECT_SOURCE_DIR}/app)
 set(RELEASE_DIR ${PROJECT_SOURCE_DIR}/release)
@@ -59,7 +58,7 @@ if(PNI_STANDARD_CONFIG_DISABLE_CUDA EQUAL 0)
   set(CUDA_PNI_LINK_FLAGS
       "-l${CUDA_PNI_LIB} -L${CUDA_LIBRARY_DIR} -lcudart -lcufft")
   set(CUDA_LIB "-L${CUDA_LIBRARY_DIR} -lcudart")
-  set(CUDA_INCLUDE "-I${CUDA_INCLUDE_DIR} -I${CUDA_LINUX_INCLUDE_DIR}")
+  set(CUDA_INCLUDE "-I${CUDA_INCLUDE_DIR} -I${CUDA_CCCL_INCLUDE_DIR}")
 endif()
 
 set(APP_AQST "pni-aqst")
@@ -84,9 +83,10 @@ function(make_pkgconfig)
     "Cflags: -I\${includedir} -include \${includedir}/${PROJECT_NAME}/PnI-Config.hpp ${CUDA_INCLUDE}"
   )
   if(PNI_STANDARD_CONFIG_ENABLE_DPDK EQUAL 1)
-    append_line(PKGCONFIG_CONTENT "Requires: libdpdk")
+    append_line(PKGCONFIG_CONTENT "Requires: libevent fftw3f gmp libdpdk")
+  else()
+    append_line(PKGCONFIG_CONTENT "Requires: libevent fftw3f gmp")
   endif()
-  append_line(PKGCONFIG_CONTENT "Requires: libevent")
   execute_process(COMMAND echo ${PKGCONFIG_CONTENT} OUTPUT_FILE ./build/libpni.pc)
   install(FILES ./build/libpni.pc
           DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/pkgconfig)
@@ -97,7 +97,6 @@ set(COMPILE_DEBUG "-g")
 set(GLOBAL_INCLUDE "-include ${PROJECT_SOURCE_DIR}/include/PnI-Config.hpp")
 
 if(CMAKE_HOST_SYSTEM_NAME MATCHES "Linux")
-  # set(CMAKE_CXX_COMPILER "g++-13")
   set(CMAKE_CXX_FLAGS
       "${CMAKE_CXX_FLAGS} ${GLOBAL_INCLUDE} ${OPTIMIZE} -Wreturn-type -Wnoexcept ${COMPILE_DEBUG}"
   )
@@ -105,12 +104,25 @@ if(CMAKE_HOST_SYSTEM_NAME MATCHES "Linux")
       "${CMAKE_C_FLAGS} ${GLOBAL_INCLUDE} ${OPTIMIZE} -Wreturn-type ${COMPILE_DEBUG}"
   )
   set(CMAKE_CUDA_FLAGS
-      "${CMAKE_CUDA_FLAGS} ${GLOBAL_INCLUDE} ${OPTIMIZE} -Wreturn-type ${COMPILE_DEBUG} -Wnoexcept -std=c++20 --extended-lambda"
+      "${CMAKE_CUDA_FLAGS} ${GLOBAL_INCLUDE} ${OPTIMIZE} -Wreturn-type ${COMPILE_DEBUG} -Wnoexcept -std=c++20 --extended-lambda -Wno-deprecated-gpu-targets"
   )
   set(CMAKE_CXX_STANDARD 23)
   # set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
   include(GNUInstallDirs)
+  
+  # 设置共享库链接标志，确保依赖库被链接
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-as-needed")
+
+  # 先找到依赖库，在创建库之前
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBEVENT REQUIRED libevent)
+  pkg_check_modules(FFTW3 REQUIRED fftw3f)
+  pkg_check_modules(FFTW3_DOUBLE REQUIRED fftw3)
+  pkg_check_modules(GMP REQUIRED gmp)
+  pkg_check_modules(TBB REQUIRED tbb)
+  find_package(CUDAToolkit REQUIRED)
+
   if(PNI_STANDARD_CONFIG_ENABLE_DPDK EQUAL 1)
     execute_process(
       COMMAND pkg-config --cflags libdpdk
@@ -125,14 +137,26 @@ if(CMAKE_HOST_SYSTEM_NAME MATCHES "Linux")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${INCLUDE_DPDK}")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${INCLUDE_DPDK}")
   set(DPDK_LINK_FLAGS ${LINK_DPDK})
+  
+  # 包含头文件
+  include_directories(${LIBEVENT_INCLUDE_DIRS})
+  include_directories(${FFTW3_INCLUDE_DIRS})
+  include_directories(${FFTW3_DOUBLE_INCLUDE_DIRS})
+  include_directories(${GMP_INCLUDE_DIRS})
+  include_directories(${TBB_INCLUDE_DIRS})
+  
+  # 创建库
   add_library(${PROJECT_NAME} SHARED ${SOURCE_CODE_CPP})
+  target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include)
 
+  
   if(PNI_STANDARD_CONFIG_DISABLE_CUDA EQUAL 0)
     # Automatically detect and set CUDA architectures
     include(CheckLanguage)
    
     if(CMAKE_CUDA_COMPILER)
      set(CMAKE_CUDA_ARCHITECTURES 80 86)
+     set(CMAKE_CUDA_STANDARD 20)
       # enable_language(CUDA)
       # Set CUDA architectures; update this list as needed for your GPUs
      
@@ -140,39 +164,31 @@ if(CMAKE_HOST_SYSTEM_NAME MATCHES "Linux")
      check_language(CUDA)
     enable_language(CUDA)
     add_library(${CUDA_PNI_LIB} SHARED ${SOURCE_CODE_CUDA})
+    # 为 CUDA 库链接依赖
+    target_link_libraries(${CUDA_PNI_LIB} PUBLIC ${FFTW3_LIBRARIES} ${FFTW3_DOUBLE_LIBRARIES} ${GMP_LIBRARIES} ${TBB_LIBRARIES} CUDA::cudart CUDA::cufft)
     install(TARGETS ${CUDA_PNI_LIB} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    
+    # 将 CUDA 库链接到主库
+    target_link_libraries(${PROJECT_NAME} PUBLIC ${CUDA_PNI_LIB} ${LIBEVENT_LIBRARIES} ${FFTW3_LIBRARIES} ${FFTW3_DOUBLE_LIBRARIES} ${GMP_LIBRARIES})
+  else()
+    # 如果禁用 CUDA，只链接常规依赖
+    target_link_libraries(${PROJECT_NAME} PUBLIC ${LIBEVENT_LIBRARIES} ${FFTW3_LIBRARIES} ${GMP_LIBRARIES})
   endif()
 
   install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
   install(DIRECTORY "include/" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/pni)
 
-  set(LINK_LIBS ${PROJECT_NAME} ${DPDK_LINK_FLAGS} ${CUDA_PNI_LIB} ${CUDA_LIB})
+  set(LINK_LIBS ${PROJECT_NAME} ${DPDK_LINK_FLAGS} ${CUDA_PNI_LIB} ${CUDA_LIB} ${LIBEVENT_LIBRARIES} ${FFTW3_LIBRARIES} ${FFTW3_DOUBLE_LIBRARIES} ${GMP_LIBRARIES})
 
-  # 找到 libevent
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(LIBEVENT REQUIRED libevent)
-
-  # 包含头文件
-  include_directories(${LIBEVENT_INCLUDE_DIRS})
-  target_link_libraries(${PROJECT_NAME} ${LIBEVENT_LIBRARIES})
-  target_include_directories(${PROJECT_NAME} INTERFACE ${PROJECT_SOURCE_DIR}/include)
   add_executable(${APP_AQST} ${SRC_AQST})
-  target_link_libraries(${APP_AQST} ${LINK_LIBS} ${LIBEVENT_LIBRARIES})
+  target_link_libraries(${APP_AQST} ${LINK_LIBS})
   install(TARGETS ${APP_AQST} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
   add_executable(${APP_RAWDATA} ${SRC_RAWDATA})
-  target_link_libraries(${APP_RAWDATA} ${LINK_LIBS} ${LIBEVENT_LIBRARIES})
+  target_link_libraries(${APP_RAWDATA} ${LINK_LIBS})
   install(TARGETS ${APP_RAWDATA} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
   make_pkgconfig()
-
-  # # 查找 FFTW 库 find_package(FFTW REQUIRED)
-
-  # if (FFTW_FOUND) include_directories(${FFTW_INCLUDE_DIRS}) list(APPEND
-  # LINK_LIBS ${FFTW_LIBRARIES}) else() message(FATAL_ERROR "FFTW library not
-  # found!") endif()
-
-  # # 在目标中链接 FFTW target_link_libraries(${PROJECT_NAME} ${LINK_LIBS})
 
 elseif(CMAKE_HOST_SYSTEM_NAME MATCHES "Windows")
   set(CMAKE_CXX_COMPILER

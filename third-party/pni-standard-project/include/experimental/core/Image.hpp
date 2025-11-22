@@ -121,6 +121,7 @@ struct TensorData {
   GridType grid;
   T *ptr;
 };
+
 template <typename T, int D>
 using TensorDataInput = TensorData<const T, D>;
 template <typename T, int D>

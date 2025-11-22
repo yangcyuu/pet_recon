@@ -126,7 +126,7 @@ inline float const *sssBatchLORGetor::getLORBatch(
     throw openpni::exceptions::algorithm_unexpected_condition("sssBatchLORGetor::getLORBatch: invalid slice");
   m_tempValues.reserve(MichInfoHub(__michDefine).getBinNum() * MichInfoHub(__michDefine).getViewNum() *
                        (__sliceEnd - __sliceBegin));
-  example::d_parralel_fill(m_tempValues.get(), 0.0f, m_tempValues.elements());
+  example::d_parallel_fill(m_tempValues.get(), 0.0f, m_tempValues.elements());
   if (m_dataFormat == DataFormat::MICH) {
     impl::d_redirect_from_mich_from_slice_range(__sliceBegin, __sliceEnd, md_michData, m_tempValues.get(),
                                                 __michDefine);
@@ -182,25 +182,26 @@ struct sssTOFDataView {
 };
 
 struct scatterTOFParams {
-  float m_timeBinWidth;
-  float m_timeBinStart;
-  float m_timeBinEnd;
+  float m_timeBinWidth_ns;
+  float m_timeBinStart_ns;
+  float m_timeBinEnd_ns;
   float m_systemTimeRes_ns;
   int m_tofBinNum = 0;
 
   scatterTOFParams() {};
   scatterTOFParams(
-      float timeBinWidth, float timeBinStart, float timeBinEnd, float systemTimeRes_ns)
-      : m_timeBinWidth(timeBinWidth)
-      , m_timeBinStart(timeBinStart)
-      , m_timeBinEnd(timeBinEnd)
+      float timeBinWidth_ns, float timeBinStart_ns, float timeBinEnd_ns, float systemTimeRes_ns)
+      : m_timeBinWidth_ns(timeBinWidth_ns)
+      , m_timeBinStart_ns(timeBinStart_ns)
+      , m_timeBinEnd_ns(timeBinEnd_ns)
       , m_systemTimeRes_ns(systemTimeRes_ns) {
     calTofBinNum();
   }
 
   void calTofBinNum() {
-    m_tofBinNum = ceil((m_timeBinEnd - m_timeBinStart) / m_timeBinWidth);
+    m_tofBinNum = ceil((m_timeBinEnd_ns - m_timeBinStart_ns) / m_timeBinWidth_ns);
     m_tofBinNum -= 1 - (m_tofBinNum % 2); // 让 bin 数为奇数
+    PNI_DEBUG("MichScatter: TOF bin num set to " + std::to_string(m_tofBinNum) + "\n");
   }
 };
 class MichScatter_impl {
@@ -291,7 +292,6 @@ private:
   RawInputItem<float const> m_emissionMap{"MichScatter_emissionMap"};
   core::Grids<3> m_emissionMapGrids;
   std::optional<core::Grids<3>> m_scatterPointGrid;
-
   // pre-generate data
   int m_gaussSize;
   double m_commonFactor;
@@ -346,8 +346,8 @@ inline void MichScatter_impl::setScatterEffTableEnergy(
   m_scatterMichGenerated = false;
 }
 inline void MichScatter_impl::setTOFParams(
-    double timeBinWidth, double timeBinStart, double timeBinEnd, double systemTimeRes_ns) {
-  m_sssTOFParams = scatterTOFParams(timeBinWidth, timeBinStart, timeBinEnd, systemTimeRes_ns);
+    double timeBinWidth_ns, double timeBinStart_ns, double timeBinEnd_ns, double systemTimeRes_ns) {
+  m_sssTOFParams = scatterTOFParams(timeBinWidth_ns, timeBinStart_ns, timeBinEnd_ns, systemTimeRes_ns);
   checkTOFFlags();
   m_preDataGenerated = false;
   m_scatterMichGenerated = false;
@@ -458,7 +458,20 @@ inline const float *MichScatter_impl::getDScatterFactorsBatch(
   checkOrThrowGenerateFlags();
   md_tempScatFactors.reserve(events.size());
   checkDScatterMich();
-  impl::d_getDScatterFactorsBatch(md_tempScatFactors.get(), md_scatterMich.get(), events, m_michDefine);
+  // checkTOFmodel
+  checkTOFFlags();
+  if (!m_TOFModel)
+    impl::d_getDScatterFactorsBatch(md_tempScatFactors.get(), md_scatterMich.get(), events, m_michDefine);
+  else {
+    auto crystalGeo = m_michCrystal.dumpCrystalsRectangleLayout(); // notice:RectangleID
+    auto dsMichCrystal = MichCrystal(m_dsmichDefine);
+    auto dsCrystalGeo = dsMichCrystal.dumpCrystalsRectangleLayout(); // notice:RectangleID,dsGeo
+    auto d_crystalGeo = make_cuda_sync_ptr_from_hcopy(crystalGeo, "getDScatterFactorsBatch_crystalGeo_fromHost");
+    auto d_dsCrystalGeo = make_cuda_sync_ptr_from_hcopy(dsCrystalGeo, "getDScatterFactorsBatch_dsCrystalGeo_fromHost");
+    impl::d_getDScatterFactorsBatchTOF(md_tempScatFactors.get(), md_scatterMich.get(), d_crystalGeo.get(),
+                                       d_dsCrystalGeo.get(), events, m_michDefine, m_dsmichDefine,
+                                       m_sssTOFParams.m_timeBinWidth_ns, m_sssTOFParams.m_tofBinNum);
+  }
   return md_tempScatFactors.get();
 }
 
@@ -524,6 +537,7 @@ inline void MichScatter_impl::generateScatterMich() {
     md_scatterMich = make_cuda_sync_ptr<float>(dsmichInfo.getBinNum() * dsmichInfo.getViewNum() *
                                                    michInfo.getSliceNum() * m_sssTOFParams.m_tofBinNum,
                                                "MichScatter_scatterMichs_TOF");
+
     md_scatterMich.memset(0);
     if (m_emissionMap.raw_data.raw_ptr) {
       checkPreGenerateFlags();
@@ -531,7 +545,8 @@ inline void MichScatter_impl::generateScatterMich() {
     } else {
       PNI_DEBUG("MichScatter: No emission map bound, emission map skipped.\n");
     }
-  } else {
+  } else if (!m_TOFModel) {
+    PNI_DEBUG("sss using non-tof model.\n");
     md_scatterMich =
         make_cuda_sync_ptr<float>(core::MichInfoHub::create(m_michDefine).getMichSize(), "MichScatter_scatterMich");
     md_scatterMich.memset(0);
@@ -545,7 +560,7 @@ inline void MichScatter_impl::generateScatterMich() {
   }
   m_scatterMichGenerated = true;
 }
-std::unique_ptr<MichScatter_impl> MichScatter_impl::copy() {
+inline std::unique_ptr<MichScatter_impl> MichScatter_impl::copy() {
   auto newImpl = std::make_unique<MichScatter_impl>(m_michDefine);
   newImpl->m_sssTOFParams = m_sssTOFParams;
   newImpl->m_scatterEnergyWindow = m_scatterEnergyWindow;
@@ -560,10 +575,85 @@ std::unique_ptr<MichScatter_impl> MichScatter_impl::copy() {
 
   return newImpl;
 }
-void MichScatter_impl::setScatterPointGrid(
+
+inline void MichScatter_impl::setScatterPointGrid(
     core::Grids<3> grid) {
   m_scatterPointGrid = grid;
   m_preDataGenerated = false;
   m_scatterMichGenerated = false;
 }
 } // namespace openpni::experimental::node
+
+namespace openpni::experimental::node::impl {
+
+__PNI_CUDA_MACRO__ inline void chooseNearestBlockAndCalWeight(
+    int &__blockNearest, float &__w, int __block, int __cryID, const core::CrystalGeom *__d_crystalGeometry,
+    const core::CrystalGeom *__d_dsCrystalGeometry) {
+  int block_left = __block - 1;
+  int block_right = __block + 1;
+  auto cry_block_left = __d_crystalGeometry[__cryID].O - __d_dsCrystalGeometry[block_left].O;
+  auto cry_block_right = __d_crystalGeometry[__cryID].O - __d_dsCrystalGeometry[block_right].O;
+  auto distance_cry_block_left = algorithms::l2(cry_block_left);
+  auto distance_cry_block_right = algorithms::l2(cry_block_right);
+  if (distance_cry_block_left > distance_cry_block_right) {
+    __blockNearest = block_right;
+    __w = distance_cry_block_right;
+  } else {
+    __blockNearest = block_left;
+    __w = distance_cry_block_left;
+  }
+}
+
+__PNI_CUDA_MACRO__ inline float get2DInterpolationUpsamplingValue(
+    const float *__in_dsSumTOFBinSSSValueExtend, size_t __lorIdx, const core::MichDefine __michDefine,
+    const core::MichDefine __dsmichDefine, const core::CrystalGeom *__crystalGeometry,
+    const core::CrystalGeom *__dsCrystalGeometry) {
+  auto michInfo = core::MichInfoHub::create(__michDefine);
+  auto dsMichInfo = core::MichInfoHub::create(__dsmichDefine);
+  auto coverter = core::IndexConverter::create(__michDefine);
+  auto dsCoverter = core::IndexConverter::create(__dsmichDefine);
+  auto [cry1R, cry2R] = coverter.getCrystalIDFromLORID(__lorIdx);
+  auto cry1FlatR = core::mich::getFlatIdFromRectangleID(__michDefine.polygon, __michDefine.detector, cry1R);
+  auto cry2FlatR = core::mich::getFlatIdFromRectangleID(__michDefine.polygon, __michDefine.detector, cry2R);
+  // cal where cry1 cry2 in block,this is also the index in ds image
+  int block1FlatR = cry1FlatR / (__michDefine.detector.crystalNumU * __michDefine.detector.crystalNumV);
+  int block2FlatR = cry2FlatR / (__michDefine.detector.crystalNumU * __michDefine.detector.crystalNumV);
+  // cal weight of block-cry which equals to distance from cry to block center
+  float wA = algorithms::l2(__crystalGeometry[cry1FlatR].O - __dsCrystalGeometry[block1FlatR].O);
+  float wB = algorithms::l2(__crystalGeometry[cry2FlatR].O - __dsCrystalGeometry[block2FlatR].O);
+  // find nearest block and cal weight
+  float wA_near, wB_near;
+  int block1_nearFlatR, block2_nearFlatR;
+  chooseNearestBlockAndCalWeight(block1_nearFlatR, wA_near, block1FlatR, cry1FlatR, __crystalGeometry,
+                                 __dsCrystalGeometry);
+  chooseNearestBlockAndCalWeight(block2_nearFlatR, wB_near, block2FlatR, cry2FlatR, __crystalGeometry,
+                                 __dsCrystalGeometry);
+  // cal A-B,A-B_near,A_near-B,A_near-B_near's dsLorID
+  auto block1R = dsCoverter.getRectangleIdFromFlatId(block1FlatR);
+  auto block2R = dsCoverter.getRectangleIdFromFlatId(block2FlatR);
+  auto block1_nearR = dsCoverter.getRectangleIdFromFlatId(block1_nearFlatR);
+  auto block2_nearR = dsCoverter.getRectangleIdFromFlatId(block2_nearFlatR);
+  auto dsLORAB = core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1R, block2R);
+  auto dsLORAB_near =
+      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1R, block2_nearR);
+  auto dsLORA_nearB =
+      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1_nearR, block2R);
+  auto dsLORA_nearB_near =
+      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1_nearR, block2_nearR);
+  // because the slice has been extend,so here need to recal dslorId
+  auto biviNum = michInfo.getBinNum() * michInfo.getViewNum();
+  auto dsbiviNum = dsMichInfo.getBinNum() * dsMichInfo.getViewNum();
+  auto sliceNow = __lorIdx / biviNum;
+  dsLORAB = dsLORAB % dsbiviNum + sliceNow * dsbiviNum;
+  dsLORAB_near = dsLORAB_near % dsbiviNum + sliceNow * dsbiviNum;
+  dsLORA_nearB = dsLORA_nearB % dsbiviNum + sliceNow * dsbiviNum;
+  dsLORA_nearB_near = dsLORA_nearB_near % dsbiviNum + sliceNow * dsbiviNum;
+  // bilinear interpolation
+  float value = __in_dsSumTOFBinSSSValueExtend[dsLORAB] * wA * wB +
+                __in_dsSumTOFBinSSSValueExtend[dsLORAB_near] * wA * wB_near +
+                __in_dsSumTOFBinSSSValueExtend[dsLORA_nearB] * wA_near * wB +
+                __in_dsSumTOFBinSSSValueExtend[dsLORA_nearB_near] * wA_near * wB_near;
+  float w_All = wA * wB + wA * wB_near + wA_near * wB + wA_near * wB_near;
+  return value / w_All;
+}
+} // namespace openpni::experimental::node::impl

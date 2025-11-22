@@ -5,10 +5,10 @@
 
 #include "MichScatterImpl.hpp"
 #include "Projection.h"
-#include "Test.h"
 #include "include/experimental/algorithms/EasyMath.hpp"
 #include "include/experimental/example/EasyParallel.hpp"
 #include "include/experimental/tools/Loop.hpp"
+#include "src/common/Debug.h"
 namespace openpni::experimental::node::impl {
 //==========common sss functions
 std::vector<core::Vector<float, 3>> generateAllSSSPoints(
@@ -300,7 +300,7 @@ void sssNormalization(
         thrust::plus<float>());
   }
   float scale = oldSum / newSum;
-  example::d_parralel_div(__d_scatterValue, scale, __d_scatterValue, lorNum);
+  example::d_parallel_div(__d_scatterValue, scale, __d_scatterValue, lorNum);
 }
 void tailFitting(
     float *__d_scatterValue, sssBatchLORGetor &__prompt, MichNormalization &__norm, MichRandom &__rand,
@@ -330,52 +330,10 @@ void tailFitting(
         batchSize, [sliceBegin, lorNumOneSlice, d_lorBatch = d_lorBatch.data()] __device__(std::size_t idx) {
           d_lorBatch[idx] = idx + sliceBegin * lorNumOneSlice;
         });
-    // temp
     auto *promptValue = __prompt.getLORBatch(sliceBegin, sliceEnd, __michDefine);
     auto *attnFactors = __attnCutBedCoff.getDAttnFactorsBatch(d_lorBatch.cspan(batchSize));
     auto *normFactors = __norm.getDNormFactorsBatch(d_lorBatch.cspan(batchSize));
     auto *randFactors = __rand.getDRandomFactorsBatch(d_lorBatch.cspan(batchSize));
-    // d_print_none_zero_average_value(randFactors, batchSize);
-    // d_print_none_zero_average_value(promptValue, batchSize);
-    // d_print_none_zero_average_value(randFactors, batchSize);
-    // d_print_none_zero_average_value(attnFactors, batchSize);
-    // std::cout << "Bin num out of FOV one side: " << binNumOutFOVOneSide << std::endl;
-    // tools::parallel_for_each_CUDA(sliceBegin, sliceEnd, [=] __device__(std::size_t sliceId) {
-    //   algorithms::LinearFittingHelper<float, algorithms::LinearFittingType::LinearFitting_NoBias> __linearFitModel;
-    //   float Y_XSum = 0;
-    //   float YSum = 0;
-    //   for (size_t lorInsl = 0; lorInsl < lorNumOneSlice; ++lorInsl) {
-    //     int binIndex = lorInsl % binNum;
-    //     size_t lorIndex = sliceId * lorNumOneSlice + lorInsl;
-    //     size_t indexOfFactors = (sliceId - sliceBegin) * lorNumOneSlice + lorInsl;
-    //     // __d_scatterValue[lorIndex] = 0;
-    //     if (attnFactors[indexOfFactors] >= __tailFittingThreshold && binIndex >= binNumOutFOVOneSide &&
-    //         binIndex < binNum - binNumOutFOVOneSide) {
-    //       if (normFactors[indexOfFactors] == 0)
-    //         continue;
-    //       __linearFitModel.add(__d_scatterValue[lorIndex], promptValue[indexOfFactors] -
-    //       randFactors[indexOfFactors]); Y_XSum += promptValue[indexOfFactors] - randFactors[indexOfFactors]; YSum +=
-    //       promptValue[indexOfFactors];
-    //       // __d_scatterValue[lorIndex] = 1;
-    //     }
-    //   }
-    //   // if (sliceId % 100 == 0)
-    //   //   printf("Average Y_X: %f, Average Y: %f\n", Y_XSum / __linearFitModel.getCount(),
-    //   //          YSum / __linearFitModel.getCount());
-    //   for (size_t lorInsl = 0; lorInsl < lorNumOneSlice; ++lorInsl) {
-    //     int binIndex = lorInsl % binNum;
-    //     size_t lorIndex = sliceId * lorNumOneSlice + lorInsl;
-    //     size_t indexOfFactors = (sliceId - sliceBegin) * lorNumOneSlice + lorInsl;
-    //     if (binIndex >= binNumOutFOVOneSide && binIndex < binNum - binNumOutFOVOneSide) {
-    //       if (normFactors[indexOfFactors] == 0) {
-    //         __d_scatterValue[lorIndex] = 0;
-    //         continue;
-    //       }
-    //       __d_scatterValue[lorIndex] = __linearFitModel.predict(__d_scatterValue[lorIndex]);
-    //     } else
-    //       __d_scatterValue[lorIndex] = 0;
-    //   }
-    // });
     d_XXFirst.reserve(sliceEnd - sliceBegin);
     d_XYFirst.reserve(sliceEnd - sliceBegin);
     d_XXSum.reserve(sliceEnd - sliceBegin);
@@ -398,8 +356,6 @@ void tailFitting(
         }
         d_tempXX[idx] = __d_scatterValue[lorIndex] * __d_scatterValue[lorIndex];
         d_tempXY[idx] = __d_scatterValue[lorIndex] * (promptValue[idx] - randFactors[idx]);
-        // printf("lorIndex:%d, scatterValue:%f, promptValue:%f, randFactor:%f, XX:%f, XY:%f\n", int(lorIndex),
-        //        __d_scatterValue[lorIndex], promptValue[idx], randFactors[idx], d_tempXX[idx], d_tempXY[idx]);
       }
     });
     thrust::reduce_by_key(
@@ -515,16 +471,17 @@ void singleScatterSimulationTOF(
         }
         for (int tofbinIdx = 0; tofbinIdx < __d_sssData.__TOFBinNum; tofbinIdx++)
           __d_sssData.__out_d_dsTOFBinSSSValue[dslorIdx * __d_sssData.__TOFBinNum + tofbinIdx] =
-              sssValue * __d_sssData.__commonfactor;
+              sssValue * __d_sssData.__commonfactor * 1000000;
       }
     });
   }
 }
 void d_sssTOFsumByTOFBin(
     float *__out_d_dsSumTOFBinSSSValue, float *__d_dsTOFBinSSSValue, std::size_t __dslorNum, int __tofbinNum) {
-  tools::parallel_for_each_CUDA(__dslorNum * __tofbinNum, [=] __device__(std::size_t idx) {
-    size_t lorIdx = idx / __tofbinNum;
-    __out_d_dsSumTOFBinSSSValue[lorIdx] += __d_dsTOFBinSSSValue[idx];
+  tools::parallel_for_each_CUDA(__dslorNum, [=] __device__(std::size_t dsLORIndex) {
+    for (size_t tofbinIdx = 0; tofbinIdx < __tofbinNum; tofbinIdx++) {
+      __out_d_dsSumTOFBinSSSValue[dsLORIndex] += __d_dsTOFBinSSSValue[dsLORIndex * __tofbinNum + tofbinIdx];
+    }
   });
 }
 void d_sssTOFextendSlice(
@@ -539,84 +496,26 @@ void d_sssTOFextendSlice(
   auto dsBinNum = dsMichInfo.getBinNum();
   auto dsViewNum = dsMichInfo.getViewNum();
 
-  tools::parallel_for_each_CUDA(dsBinNum * dsViewNum * sliceNum, [=] __device__(std::size_t idx) {
-    auto sliceIdx = idx / (dsBinNum * dsViewNum);
-    auto dsbivi = idx % (dsBinNum * dsViewNum);
+  tools::parallel_for_each_CUDA(sliceNum, [=] __device__(std::size_t sliceIdx) {
     auto [ring1, ring2] = core::mich::getRing1Ring2FromSlice(__michDefine.polygon, __michDefine.detector, sliceIdx);
     int dsRing1 = ring1 * (dsRingNum / ringNum);
     int dsRing2 = ring2 * (dsRingNum / ringNum);
     int dsSliceIdx = core::mich::getSliceFromRing1Ring2(__dsDefine.polygon, __dsDefine.detector, dsRing1, dsRing2);
-    __d_dsSumTOFBinSSSValueExtend[idx] = __d_dsSumTOFBinSSSValue[dsbivi + dsSliceIdx * dsBinNum * dsViewNum];
+    for (size_t dsbivi = 0; dsbivi < dsBinNum * dsViewNum; dsbivi++) {
+      __d_dsSumTOFBinSSSValueExtend[dsbivi + sliceIdx * dsBinNum * dsViewNum] =
+          __d_dsSumTOFBinSSSValue[dsbivi + dsSliceIdx * dsBinNum * dsViewNum];
+    }
   });
-}
-__PNI_CUDA_MACRO__ void chooseNearestBlockAndCalWeight(
-    int &__blockNearest, float &__w, int __block, int __cryID, const core::CrystalGeom *__d_crystalGeometry,
-    const core::CrystalGeom *__d_dsCrystalGeometry) {
-  int block_left = __block - 1;
-  int block_right = __block + 1;
-  auto cry_block_left = __d_crystalGeometry[__cryID].O - __d_dsCrystalGeometry[block_left].O;
-  auto cry_block_right = __d_crystalGeometry[__cryID].O - __d_dsCrystalGeometry[block_right].O;
-  auto distance_cry_block_left = algorithms::l2(cry_block_left);
-  auto distance_cry_block_right = algorithms::l2(cry_block_right);
-  if (distance_cry_block_left > distance_cry_block_right) {
-    __blockNearest = block_right;
-    __w = distance_cry_block_right;
-  } else {
-    __blockNearest = block_left;
-    __w = distance_cry_block_left;
-  }
-}
-__PNI_CUDA_MACRO__ float get2DInterpolationUpsamplingValue(
-    const float *__in_dsSumTOFBinSSSValueExtend, size_t __lorIdx, const core::MichDefine __michDefine,
-    const core::MichDefine __dsmichDefine, const core::CrystalGeom *__crystalGeometry,
-    const core::CrystalGeom *__dsCrystalGeometry) {
-  auto michInfo = core::MichInfoHub::create(__michDefine);
-  auto dsMichInfo = core::MichInfoHub::create(__dsmichDefine);
-  auto coverter = core::IndexConverter::create(__michDefine);
-  auto dsCoverter = core::IndexConverter::create(__dsmichDefine);
-  auto [cry1R, cry2R] = coverter.getCrystalIDFromLORID(__lorIdx);
-  auto cry1FlatR = core::mich::getFlatIdFromRectangleID(__michDefine.polygon, __michDefine.detector, cry1R);
-  auto cry2FlatR = core::mich::getFlatIdFromRectangleID(__michDefine.polygon, __michDefine.detector, cry2R);
-  // cal where cry1 cry2 in block,this is also the index in ds image
-  int block1FlatR = cry1FlatR / (__michDefine.detector.crystalNumU * __michDefine.detector.crystalNumV);
-  int block2FlatR = cry2FlatR / (__michDefine.detector.crystalNumU * __michDefine.detector.crystalNumV);
-  // cal weight of block-cry which equals to distance from cry to block center
-  float wA = algorithms::l2(__crystalGeometry[cry1FlatR].O - __dsCrystalGeometry[block1FlatR].O);
-  float wB = algorithms::l2(__crystalGeometry[cry2FlatR].O - __dsCrystalGeometry[block2FlatR].O);
-  // find nearest block and cal weight
-  float wA_near, wB_near;
-  int block1_nearFlatR, block2_nearFlatR;
-  chooseNearestBlockAndCalWeight(block1_nearFlatR, wA_near, block1FlatR, cry1FlatR, __crystalGeometry,
-                                 __dsCrystalGeometry);
-  chooseNearestBlockAndCalWeight(block2_nearFlatR, wB_near, block2FlatR, cry2FlatR, __crystalGeometry,
-                                 __dsCrystalGeometry);
-  // cal A-B,A-B_near,A_near-B,A_near-B_near's dsLorID
-  auto block1R = dsCoverter.getRectangleIdFromFlatId(block1FlatR);
-  auto block2R = dsCoverter.getRectangleIdFromFlatId(block2FlatR);
-  auto block1_nearR = dsCoverter.getRectangleIdFromFlatId(block1_nearFlatR);
-  auto block2_nearR = dsCoverter.getRectangleIdFromFlatId(block2_nearFlatR);
-  auto dsLORAB = core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1R, block2R);
-  auto dsLORAB_near =
-      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1R, block2_nearR);
-  auto dsLORA_nearB =
-      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1_nearR, block2R);
-  auto dsLORA_nearB_near =
-      core::mich::getLORIDFromRectangleID(__dsmichDefine.polygon, __dsmichDefine.detector, block1_nearR, block2_nearR);
-  // because the slice has been extend,so here need to recal dslorId
-  auto biviNum = michInfo.getBinNum() * michInfo.getViewNum();
-  auto dsbiviNum = dsMichInfo.getBinNum() * dsMichInfo.getViewNum();
-  auto sliceNow = __lorIdx / biviNum;
-  dsLORAB = dsLORAB % dsbiviNum + sliceNow * dsbiviNum;
-  dsLORAB_near = dsLORAB_near % dsbiviNum + sliceNow * dsbiviNum;
-  dsLORA_nearB = dsLORA_nearB % dsbiviNum + sliceNow * dsbiviNum;
-  dsLORA_nearB_near = dsLORA_nearB_near % dsbiviNum + sliceNow * dsbiviNum;
-  // bilinear interpolation
-  float value = __in_dsSumTOFBinSSSValueExtend[dsLORAB] * wA * wB +
-                __in_dsSumTOFBinSSSValueExtend[dsLORAB_near] * wA * wB_near +
-                __in_dsSumTOFBinSSSValueExtend[dsLORA_nearB] * wA_near * wB +
-                __in_dsSumTOFBinSSSValueExtend[dsLORA_nearB_near] * wA_near * wB_near;
-  float w_All = wA * wB + wA * wB_near + wA_near * wB + wA_near * wB_near;
-  return value / w_All;
+
+  // tools::parallel_for_each_CUDA(dsBinNum * dsViewNum * sliceNum, [=] __device__(std::size_t idx) {
+  //   auto sliceIdx = idx / (dsBinNum * dsViewNum);
+  //   auto dsbivi = idx % (dsBinNum * dsViewNum);
+  //   auto [ring1, ring2] = core::mich::getRing1Ring2FromSlice(__michDefine.polygon, __michDefine.detector, sliceIdx);
+  //   int dsRing1 = ring1 * (dsRingNum / ringNum);
+  //   int dsRing2 = ring2 * (dsRingNum / ringNum);
+  //   int dsSliceIdx = core::mich::getSliceFromRing1Ring2(__dsDefine.polygon, __dsDefine.detector, dsRing1, dsRing2);
+  //   __d_dsSumTOFBinSSSValueExtend[idx] = __d_dsSumTOFBinSSSValue[dsbivi + dsSliceIdx * dsBinNum * dsViewNum];
+  // });
 }
 void d_2DIngerpolationUpSampling(
     float *__d_sssValue, const float *__d_dsSumTOFBinSSSValueExtend, const core::MichDefine __michDefine,
@@ -632,7 +531,7 @@ void d_2DIngerpolationUpSampling(
 }
 void tailFittingTOF(
     float *__out_d_dsfullSliceTOFBinSSSValue, const float *__d_sssValue, const float *__d_dsTOFBinSSSValue,
-    const float *__d_prompt, MichNormalization &__norm, MichRandom &__rand, MichAttn &__attnCutBedCoff,
+    sssBatchLORGetor &__prompt, MichNormalization &__norm, MichRandom &__rand, MichAttn &__attnCutBedCoff,
     const core::MichDefine __michDefine, const core::MichDefine __dsmichDefine, int __tofBinNum,
     int __minSectorDifference, double __tailFittingThreshold) {
   auto michInfo = core::MichInfoHub::create(__michDefine);
@@ -649,6 +548,13 @@ void tailFittingTOF(
   auto dsviewNum = dsMichInfo.getViewNum();
 
   cuda_sync_ptr<std::size_t> d_lorBatch{"ScatterTailFittingTOF_lorBatch"};
+  cuda_sync_ptr<float> d_XXFirst{"ScatterTailFittingTOF_XXFirst"};
+  cuda_sync_ptr<float> d_XYFirst{"ScatterTailFittingTOF_XYFirst"};
+  cuda_sync_ptr<float> d_XXSum{"ScatterTailFittingTOF_XXSum"};
+  cuda_sync_ptr<float> d_XYSum{"ScatterTailFittingTOF_XYSum"};
+  cuda_sync_ptr<float> d_tempXX{"ScatterTailFittingTOF_tempXX"};
+  cuda_sync_ptr<float> d_tempXY{"ScatterTailFittingTOF_tempXY"};
+  cuda_sync_ptr<float> d_tempReduceKeys{"ScatterTailFittingTOF_tempReduceKeys"};
   for (const auto [sliceBegin, sliceEnd] :
        tools::chunked_ranges_generator.by_max_size(0, sliceNum, 5 * 1024 * 1024 / lorNumOneSlice)) {
     const auto batchSize = (sliceEnd - sliceBegin) * lorNumOneSlice;
@@ -657,40 +563,72 @@ void tailFittingTOF(
         batchSize, [sliceBegin, lorNumOneSlice, d_lorBatch = d_lorBatch.data()] __device__(std::size_t idx) {
           d_lorBatch[idx] = idx + sliceBegin * lorNumOneSlice;
         });
+    auto *promptValue = __prompt.getLORBatch(sliceBegin, sliceEnd, __michDefine);
     auto *attnFactors = __attnCutBedCoff.getDAttnFactorsBatch(d_lorBatch.cspan(batchSize));
     auto *normFactors = __norm.getDNormFactorsBatch(d_lorBatch.cspan(batchSize));
     auto *randFactors = __rand.getDRandomFactorsBatch(d_lorBatch.cspan(batchSize));
 
-    tools::parallel_for_each_CUDA(sliceBegin, sliceEnd, [=] __device__(std::size_t sliceId) {
-      algorithms::LinearFittingHelper<float, algorithms::LinearFittingType::LinearFitting_NoBias> __linearFitModel;
-      auto [ring1, ring2] = core::mich::getRing1Ring2FromSlice(__michDefine.polygon, __michDefine.detector, sliceId);
-      int dsRing1 = ring1 * dsRingNum / ringNum;
-      int dsRing2 = ring2 * dsRingNum / ringNum;
-      auto dsSliceIdx =
-          core::mich::getSliceFromRing1Ring2(__dsmichDefine.polygon, __dsmichDefine.detector, dsRing1, dsRing2);
-
-      for (size_t lorInsl = 0; lorInsl < lorNumOneSlice; ++lorInsl) {
-        int binIndex = lorInsl % binNum;
-        size_t lorIndex = sliceId * lorNumOneSlice + lorInsl;
-        size_t indexOfFactors = (sliceId - sliceBegin) * lorNumOneSlice + lorInsl;
-        if (attnFactors[indexOfFactors] >= __tailFittingThreshold && binIndex >= binNumOutFOVOneSide &&
-            binIndex < binNum - binNumOutFOVOneSide) {
-          if (normFactors[indexOfFactors] <= 0)
-            continue;
-
-          __linearFitModel.add(__d_sssValue[lorIndex], __d_prompt[lorIndex] - randFactors[indexOfFactors]);
+    d_XXFirst.reserve(sliceEnd - sliceBegin);
+    d_XYFirst.reserve(sliceEnd - sliceBegin);
+    d_XXSum.reserve(sliceEnd - sliceBegin);
+    d_XYSum.reserve(sliceEnd - sliceBegin);
+    d_tempXX.reserve(batchSize);
+    d_tempXY.reserve(batchSize);
+    d_tempReduceKeys.reserve(batchSize);
+    tools::parallel_for_each_CUDA(batchSize, [=, d_tempXX = d_tempXX.data(), d_tempXY = d_tempXY.data(),
+                                              d_tempReduceKeys = d_tempReduceKeys.data()] __device__(std::size_t idx) {
+      size_t lorIndex = idx + sliceBegin * lorNumOneSlice;
+      size_t key = idx / lorNumOneSlice;
+      d_tempReduceKeys[idx] = key;
+      int binIndex = lorIndex % binNum;
+      d_tempXX[idx] = 0;
+      d_tempXY[idx] = 0;
+      if (attnFactors[idx] >= __tailFittingThreshold && binIndex >= binNumOutFOVOneSide &&
+          binIndex < binNum - binNumOutFOVOneSide) {
+        if (normFactors[idx] == 0) {
+          return;
         }
-      }
-
-      for (size_t bivi = 0; bivi < dsbinNum * dsviewNum; bivi++) {
-        for (int tofbinIdx = 0; tofbinIdx < __tofBinNum; tofbinIdx++) {
-          __out_d_dsfullSliceTOFBinSSSValue[bivi + sliceId * dsbinNum * dsviewNum +
-                                            tofbinIdx * dsbinNum * dsviewNum * sliceNum] =
-              __linearFitModel.predict(
-                  __d_dsTOFBinSSSValue[(bivi + dsSliceIdx * dsbinNum * dsviewNum) * __tofBinNum + tofbinIdx]);
-        }
+        d_tempXX[idx] = __d_sssValue[lorIndex] * __d_sssValue[lorIndex];
+        d_tempXY[idx] = __d_sssValue[lorIndex] * (promptValue[idx] - randFactors[idx]);
+        // // test
+        // auto testSCale = promptValue[idx] - randFactors[idx];
+        // printf("prompt*10000:%f, rand*10000:%f, scale:%f\n", promptValue[idx] * 10000, randFactors[idx] * 10000,
+        //        testSCale);
       }
     });
+    thrust::reduce_by_key(
+        thrust::cuda::par.on(basic::cuda_ptr::default_stream()), thrust::device_pointer_cast(d_tempReduceKeys.data()),
+        thrust::device_pointer_cast(d_tempReduceKeys.data() + batchSize), thrust::device_pointer_cast(d_tempXX.data()),
+        thrust::device_pointer_cast(d_XXFirst.data()), thrust::device_pointer_cast(d_XXSum.data()),
+        thrust::equal_to<std::size_t>(), thrust::plus<float>());
+    thrust::reduce_by_key(
+        thrust::cuda::par.on(basic::cuda_ptr::default_stream()), thrust::device_pointer_cast(d_tempReduceKeys.data()),
+        thrust::device_pointer_cast(d_tempReduceKeys.data() + batchSize), thrust::device_pointer_cast(d_tempXY.data()),
+        thrust::device_pointer_cast(d_XYFirst.data()), thrust::device_pointer_cast(d_XYSum.data()),
+        thrust::equal_to<std::size_t>(), thrust::plus<float>());
+
+    tools::parallel_for_each_CUDA(
+        sliceBegin, sliceEnd, [=, d_XX = d_XXSum.data(), d_XY = d_XYSum.data()] __device__(std::size_t sl) {
+          size_t key = sl - sliceBegin;
+          float XX = d_XX[key];
+          float XY = d_XY[key];
+          if (XX == 0)
+            return;
+          float slope = XY / XX;
+
+          auto [ring1, ring2] = core::mich::getRing1Ring2FromSlice(__michDefine.polygon, __michDefine.detector, sl);
+          int dsRing1 = ring1 * dsRingNum / ringNum;
+          int dsRing2 = ring2 * dsRingNum / ringNum;
+          auto dsSliceIdx =
+              core::mich::getSliceFromRing1Ring2(__dsmichDefine.polygon, __dsmichDefine.detector, dsRing1, dsRing2);
+          for (size_t bivi = 0; bivi < dsbinNum * dsviewNum; bivi++) {
+            for (int tofbinIdx = 0; tofbinIdx < __tofBinNum; tofbinIdx++) {
+              __out_d_dsfullSliceTOFBinSSSValue[bivi + sl * dsbinNum * dsviewNum +
+                                                tofbinIdx * dsbinNum * dsviewNum * sliceNum] =
+                  __d_dsTOFBinSSSValue[(bivi + dsSliceIdx * dsbinNum * dsviewNum) * __tofBinNum + tofbinIdx] * slope;
+            }
+          }
+        });
   }
 }
 
@@ -703,6 +641,7 @@ void MichScatter_impl::sssPreGenerate() {
   auto allPoints = impl::generateAllSSSPoints(*m_scatterPointGrid);
   auto sssPoints =
       impl::isSSSPoints(m_AttnCoff->h_getAttnMap(), m_AttnCoff->getMapGrids(), allPoints, m_scatterPointsThreshold);
+
   md_scatterPoints = make_cuda_sync_ptr_from_hcopy(sssPoints, "MichScatter_sssPoints_fromHost");
   m_scatterCount = sssPoints.size();
   // 2. generate scatterEffTable
@@ -720,7 +659,7 @@ void MichScatter_impl::sssPreGenerate() {
     impl::d_generateSSS_AttnCoff(md_sssAttnCoff.get(), md_scatterPoints.get(), d_crystalGeo.get(),
                                  m_AttnCoff->d_getAttnMap(), m_AttnCoff->getMapGrids(), sssPoints.size(),
                                  crystalGeo.size());
-  } else {
+  } else if (m_TOFModel) {
     PNI_DEBUG("MichScatter: Start to generate TOF SSS cofficients.\n");
     auto dsMichCrystal = MichCrystal(m_dsmichDefine);
     auto dsCrystalGeo = dsMichCrystal.dumpCrystalsRectangleLayout(); // notice:RectangleID,dsGeo
@@ -730,14 +669,15 @@ void MichScatter_impl::sssPreGenerate() {
                                  m_AttnCoff->d_getAttnMap(), m_AttnCoff->getMapGrids(), sssPoints.size(),
                                  dsCrystalGeo.size());
 
-    auto gaussBlur = impl::generateGaussianBlurKernel(m_sssTOFParams.m_systemTimeRes_ns, m_sssTOFParams.m_timeBinWidth);
+    auto gaussBlur =
+        impl::generateGaussianBlurKernel(m_sssTOFParams.m_systemTimeRes_ns, m_sssTOFParams.m_timeBinWidth_ns);
     md_gaussBlurCoff = make_cuda_sync_ptr_from_hcopy(gaussBlur, "MichScatter_gaussBlur_fromHost");
     m_gaussSize = gaussBlur.size();
   }
   PNI_DEBUG("MichScatter: SSS cofficients generated.\n");
   m_preDataGenerated = true;
 }
-#define DEBUG_SSS_SAVE_FILE 0
+
 cuda_sync_ptr<float> MichScatter_impl::d_generateScatterMich() {
   auto michInfo = core::MichInfoHub::create(m_michDefine);
   auto lorNum = michInfo.getLORNum();
@@ -762,57 +702,29 @@ cuda_sync_ptr<float> MichScatter_impl::d_generateScatterMich() {
 
   impl::singleScatterSimulation(d_sssData);
   PNI_DEBUG("MichScatter: Single scatter simulation done.\n");
-  // 同步设备，确保SSS计算完成
-  // cudaError_t cudaStatus = cudaDeviceSynchronize();
-  // 保存SSS中间结果（tail fitting之前）
-  // std::vector<float> sss(lorNum);
-  // cudaStatus = cudaMemcpy(sss.data(), d_scatterValue.get(), lorNum * sizeof(float), cudaMemcpyDeviceToHost);
-  // std::cout << "saving sss mid file,size:" << sss.size() << std::endl;
-  // 保存SSS中间结果到文件
-  // std::string sss_mid_file =
-  // "/home/ustc/pni_core/new/pni-standard-project/manual-test/Recon/tempFile_debug/SSSNotailFit.bin";
-  // std::ofstream sssmidFile(sss_mid_file, std::ios::binary);
-  // if (sssmidFile.is_open()) {
-  //   sssmidFile.write(reinterpret_cast<const char *>(sss.data()), sss.size() * sizeof(float));
-  //   sssmidFile.close();
-  //   std::cout << "SSS intermediate result saved to: " << sss_mid_file << std::endl;
-  // }
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_SCATTER_INTERNAL_VALUES
+  {
+    debug::d_write_array_to_disk(d_scatterValue, "MichScatter_SSSBeforeNorm.bin");
+  }
+#endif
   //  normalization after sss
   impl::sssNormalization(d_scatterValue.get(), *m_norm, m_michDefine);
   PNI_DEBUG("MichScatter: Normalization done.\n");
-#if DEBUG_SSS_SAVE_FILE
-  // temptest,save sss data
-  // 同步设备，确保SSS计算完成
-  cudaError_t cudaStatus = cudaDeviceSynchronize();
-  // 保存SSS中间结果（tail fitting之前）
-  std::vector<float> sss_before_tail(lorNum);
-  cudaStatus = cudaMemcpy(sss_before_tail.data(), d_scatterValue.get(), lorNum * sizeof(float),
-                          cudaMemcpyDeviceToHost); // 保存SSS中间结果到文件
-  std::string sss_midnorm_file = "SSSNotailFit_Norm.bin";
-  std::ofstream midFile(sss_midnorm_file, std::ios::binary);
-  if (midFile.is_open()) {
-    midFile.write(reinterpret_cast<const char *>(sss_before_tail.data()), sss_before_tail.size() * sizeof(float));
-    midFile.close();
-    std::cout << "SSS intermediate result saved to: " << sss_midnorm_file << std::endl;
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_SCATTER_INTERNAL_VALUES
+  {
+    debug::d_write_array_to_disk(d_scatterValue, "MichScatter_SSSAfterNorm.bin");
   }
 #endif
   //  tailFitting
   PNI_DEBUG("MichScatter: Start to do tail fitting.\n");
   impl::tailFitting(d_scatterValue.get(), m_lorGetor, *m_norm, *m_random, *m_AttnCoff, m_michDefine,
                     m_minSectorDifference, m_tailFittingThreshold);
-#if DEBUG_SSS_SAVE_FILE
-  std::vector<float> sss_after_tail(lorNum);
-  cudaStatus = cudaMemcpy(sss_after_tail.data(), d_scatterValue.get(), lorNum * sizeof(float),
-                          cudaMemcpyDeviceToHost); // 保存SSS中间结果到文件
-  std::string sss_tail_file = "SSSWithTailFit.bin";
-  std::ofstream tailFile(sss_tail_file, std::ios::binary);
-  if (tailFile.is_open()) {
-    tailFile.write(reinterpret_cast<const char *>(sss_after_tail.data()), sss_after_tail.size() * sizeof(float));
-    tailFile.close();
-    std::cout << "SSS with tail fitting result saved to: " << sss_tail_file << std::endl;
+  PNI_DEBUG("MichScatter: Tail fitting done.\n");
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_SCATTER_INTERNAL_VALUES
+  {
+    debug::d_write_array_to_disk(d_scatterValue, "MichScatter_SSSTailFitting.bin");
   }
 #endif
-  PNI_DEBUG("MichScatter: Tail fitting done.\n");
   return d_scatterValue;
 }
 
@@ -843,14 +755,21 @@ cuda_sync_ptr<float> MichScatter_impl::d_generateScatterTableTOF() {
                            m_sssTOFParams.m_tofBinNum,
                            m_gaussSize,
                            m_scatterCount,
-                           m_sssTOFParams.m_timeBinWidth,
+                           m_sssTOFParams.m_timeBinWidth_ns,
                            crystalArea,
                            m_commonFactor};
   impl::singleScatterSimulationTOF(d_sssData);
+  PNI_DEBUG("MichScatter: Single scatter TOF simulation done.\n");
+  PNI_DEBUG("evaluating dsTOFBinSSSValue (1000000 times bigger)...\n");
+  debug::d_print_none_zero_average_value(__d_dsTOFBinSSSValue.get(), dslorNum * m_sssTOFParams.m_tofBinNum);
   // 7.sum by TOF bin
   auto __d_dsSumTOFBinSSSValue = make_cuda_sync_ptr<float>(dslorNum, "MichScatter_dsSumTOFBinSSSValueMich");
   impl::d_sssTOFsumByTOFBin(__d_dsSumTOFBinSSSValue.get(), __d_dsTOFBinSSSValue.get(), dslorNum,
                             m_sssTOFParams.m_tofBinNum);
+  PNI_DEBUG("evaluating dsSumTOFBinSSSValue...\n");
+  PNI_DEBUG("TOF bin num: " + std::to_string(m_sssTOFParams.m_tofBinNum) + "\n");
+  debug::d_print_none_zero_average_value(__d_dsSumTOFBinSSSValue.get(), dslorNum);
+  PNI_DEBUG("MichScatter: SSS TOF sum by TOF bin done.\n");
   // 8. dsSlice extend to slice
   auto ringNum = michInfo.getRingNum();
   auto dsRingNum = dsMichInfo.getRingNum();
@@ -862,19 +781,36 @@ cuda_sync_ptr<float> MichScatter_impl::d_generateScatterTableTOF() {
 
   impl::d_sssTOFextendSlice(__d_dsSumTOFBinSSSValueExtend.get(), __d_dsSumTOFBinSSSValue.get(), m_michDefine,
                             m_dsmichDefine);
+  PNI_DEBUG("evaluating dsSumTOFBinSSSValueExtend...\n");
+  debug::d_print_none_zero_average_value(__d_dsSumTOFBinSSSValueExtend.get(), sliceNum * dsBinNum * dsViewNum);
+  PNI_DEBUG("MichScatter: SSS TOF slice extend done.\n");
   // 9. 2D interpolation
   auto __d_sssValue = make_cuda_sync_ptr<float>(michInfo.getLORNum(), "MichScatter_sssValueMich");
   impl::d_2DIngerpolationUpSampling(__d_sssValue.get(), __d_dsSumTOFBinSSSValueExtend.get(), m_michDefine,
                                     m_dsmichDefine, d_crystalGeo.get(), d_dsCrystalGeo.get());
+  PNI_DEBUG("evaluating sssValue after 2D interpolation upsampling...\n");
+  debug::d_print_none_zero_average_value(__d_sssValue.get(), michInfo.getLORNum());
+  PNI_DEBUG("MichScatter: SSS TOF 2D interpolation upsampling done.\n");
+
   // 10. normalization after sss
   impl::sssNormalization(__d_sssValue.get(), *m_norm, m_michDefine);
-
+  PNI_DEBUG("MichScatter: SSS TOF normalization done.\n");
   // // 11. tailFitting
   auto __out_d_dsfullSliceTOFBinSSSValue = make_cuda_sync_ptr<float>(
       sliceNum * dsBinNum * dsViewNum * m_sssTOFParams.m_tofBinNum, "MichScatter_out_dsfullSliceTOFBinSSSValueMich");
-  // impl::tailFittingTOF(__out_d_dsfullSliceTOFBinSSSValue.get(), __d_sssValue.get(), __d_dsTOFBinSSSValue.get(),
-  //                      *m_lorGetor, *m_norm, *m_random, *m_AttnCoff, m_michDefine, m_dsmichDefine,
-  //                      m_sssTOFParams.m_tofBinNum, minSectorDifference, m_tailFittingThreshold);
+  impl::tailFittingTOF(__out_d_dsfullSliceTOFBinSSSValue.get(), __d_sssValue.get(), __d_dsTOFBinSSSValue.get(),
+                       m_lorGetor, *m_norm, *m_random, *m_AttnCoff, m_michDefine, m_dsmichDefine,
+                       m_sssTOFParams.m_tofBinNum, m_minSectorDifference, m_tailFittingThreshold);
+  PNI_DEBUG("MichScatter: SSS TOF tail fitting done.\n");
+
+  debug::d_print_none_zero_average_value(__out_d_dsfullSliceTOFBinSSSValue.get(),
+                                         sliceNum * dsBinNum * dsViewNum * m_sssTOFParams.m_tofBinNum);
+
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_SCATTER_INTERNAL_VALUES
+  {
+    debug::d_write_array_to_disk(__out_d_dsfullSliceTOFBinSSSValue, "ds_fullSl_fullTOF_SSSValue.bin");
+  }
+#endif
   return __out_d_dsfullSliceTOFBinSSSValue;
 }
 

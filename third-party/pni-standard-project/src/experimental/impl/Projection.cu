@@ -5,9 +5,9 @@
 #include <thrust/transform_reduce.h>
 
 #include "Projection.h"
-#include "Test.h"
 #include "include/experimental/example/EasyParallel.hpp"
 #include "include/experimental/tools/Parallel.cuh"
+#include "src/common/Debug.h"
 namespace openpni::experimental::node::impl {
 void d_vector_divide(
     std::span<float> __data, float __divisor) {
@@ -136,33 +136,34 @@ void d_apply_correction_factor(
   if (michNorm) {
     d_mulFactor.reserve(d_events.size());
     if (++mulFactorAssignTime == 1)
-      example::d_parralel_copy(michNorm->getDNormFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
+      example::d_parallel_copy(michNorm->getDNormFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
     else
-      example::d_parralel_mul(michNorm->getDNormFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
+      example::d_parallel_mul(michNorm->getDNormFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
   }
   if (michRand) {
     d_addFactor.reserve(d_events.size());
     if (++addFactorAssignTime == 1)
-      example::d_parralel_copy(michRand->getDRandomFactorsBatch(d_events), d_addFactor.data(), d_events.size());
+      example::d_parallel_copy(michRand->getDRandomFactorsBatch(d_events), d_addFactor.data(), d_events.size());
     else
-      example::d_parralel_add(michRand->getDRandomFactorsBatch(d_events), d_addFactor.data(), d_events.size());
+      example::d_parallel_multiply_add(michRand->getTimeBinRatio(), michRand->getDRandomFactorsBatch(d_events),
+                                       d_addFactor.data(), d_events.size());
   }
   if (michScat) {
     d_addFactor.reserve(d_events.size());
     if (++addFactorAssignTime == 1)
-      example::d_parralel_copy(michScat->getDScatterFactorsBatch(d_events), d_addFactor.data(), d_events.size());
+      example::d_parallel_copy(michScat->getDScatterFactorsBatch(d_events), d_addFactor.data(), d_events.size());
     else
-      example::d_parralel_add(michScat->getDScatterFactorsBatch(d_events), d_addFactor.data(), d_events.size());
+      example::d_parallel_add(michScat->getDScatterFactorsBatch(d_events), d_addFactor.data(), d_events.size());
   }
   if (michAttn) {
     d_mulFactor.reserve(d_events.size());
     if (++mulFactorAssignTime == 1)
-      example::d_parralel_copy(michAttn->getDAttnFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
+      example::d_parallel_copy(michAttn->getDAttnFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
     else
-      example::d_parralel_mul(michAttn->getDAttnFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
+      example::d_parallel_mul(michAttn->getDAttnFactorsBatch(d_events), d_mulFactor.data(), d_events.size());
   }
-  // if (d_addFactor)
-  //   d_print_none_zero_average_value(d_addFactor.data(), d_events.size());
+  if (d_addFactor)
+    debug::d_print_none_zero_average_value(d_addFactor.data(), d_events.size());
   tools::parallel_for_each_CUDA(d_events.size(), [=, d_addFactor = d_addFactor.data(),
                                                   d_mulFactor = d_mulFactor.data()] __device__(std::size_t index) {
     auto addFactor = d_addFactor ? d_addFactor[index] : 0.0f;
@@ -183,7 +184,7 @@ void d_osem_fix_integral_value(
   if (maxValue <= 0.0f)
     return;
 
-  constexpr float ratio = 1e-7f;
+  constexpr float ratio = 1e-19f;
   tools::parallel_for_each_CUDA(__d_data.size(), [=, __d_data = __d_data.data()] __device__(std::size_t idx) {
     auto &value = __d_data[idx];
     if (value < ratio * maxValue)
@@ -211,7 +212,7 @@ void d_osem_path_reverse_integral_batch_fov(
 }
 void d_osem_path_integral_batch_TOF_fov(
     core::TensorDataInput<float, 3> __img, std::span<core::MichStandardEvent const> __events, float __sample_rate,
-    float *__out_values, cubef __roi) {
+    int16_t TOFBinWid_ps, float *__out_values, cubef __roi) {
   tools::parallel_for_each_CUDA(__events.size(), [=, __events = __events.data()] __device__(std::size_t index) {
     core::Vector<int16_t, 2> pair_tofMean =
         core::Vector<int16_t, 2>::create(__events[index].cry1_tof_mean, __events[index].cry2_tof_mean);
@@ -220,12 +221,12 @@ void d_osem_path_integral_batch_TOF_fov(
     float bias = static_cast<float>(core::instant_random_float(index));
     __out_values[index] +=
         node::impl::simple_path_integral_TOF(bias, __sample_rate, __img, __events[index].geo1.O, __events[index].geo2.O,
-                                             pair_tofMean, pair_tofDev, __events[index].tof, __roi);
+                                             pair_tofMean, pair_tofDev, __events[index].tof, TOFBinWid_ps, __roi);
   });
 }
 void d_osem_path_reverse_integral_batch_TOF_fov(
     core::TensorDataOutput<float, 3> __img, std::span<core::MichStandardEvent const> __events, float __sample_rate,
-    cubef __roi) {
+    uint16_t TOFBinWid_ps, cubef __roi) {
   tools::parallel_for_each_CUDA(__events.size(), [=, __events = __events.data()] __device__(std::size_t index) {
     core::Vector<int16_t, 2> pair_tofMean =
         core::Vector<int16_t, 2>::create(__events[index].cry1_tof_mean, __events[index].cry2_tof_mean);
@@ -234,7 +235,7 @@ void d_osem_path_reverse_integral_batch_TOF_fov(
     float bias = static_cast<float>(core::instant_random_float(index));
     node::impl::simple_reverse_path_integral_TOF(bias, __sample_rate, __events[index].value, __img,
                                                  __events[index].geo1.O, __events[index].geo2.O, pair_tofMean,
-                                                 pair_tofDev, __events[index].tof, __roi);
+                                                 pair_tofDev, __events[index].tof, TOFBinWid_ps, __roi);
   });
 }
 std::vector<cubef> select_roi_by_8_pars(
@@ -279,7 +280,7 @@ void d_simple_path_reverse_integral_batch(
 }
 void d_simple_path_integral_batch_TOF(
     core::TensorDataInput<float, 3> __img, std::span<core::MichStandardEvent const> __events, float __sample_rate,
-    float *__out_values) {
+    int16_t TOFBinWid_ps, float *__out_values) {
 #if USE_CACHE_OPTIMIZE
   const auto cacheOptimize = __img.grid.totalSize() * sizeof(float) > CACHE_OPTIMIZE_THRESHOLD;
 #else
@@ -289,10 +290,11 @@ void d_simple_path_integral_batch_TOF(
       cacheOptimize ? select_roi_by_8_pars(__img.grid.bounding_box()) : std::vector<cubef>{__img.grid.bounding_box()};
   cudaMemsetAsync(__out_values, 0, sizeof(float) * __events.size(), basic::cuda_ptr::default_stream());
   for (const auto &roi : rois)
-    d_osem_path_integral_batch_TOF_fov(__img, __events, __sample_rate, __out_values, roi);
+    d_osem_path_integral_batch_TOF_fov(__img, __events, __sample_rate, TOFBinWid_ps, __out_values, roi);
 }
 void d_simple_path_reverse_integral_batch_TOF(
-    core::TensorDataOutput<float, 3> __img, std::span<core::MichStandardEvent const> __events, float __sample_rate) {
+    core::TensorDataOutput<float, 3> __img, std::span<core::MichStandardEvent const> __events, float __sample_rate,
+    int16_t TOFBinWid_ps) {
 #if USE_CACHE_OPTIMIZE
   const auto cacheOptimize = __img.grid.totalSize() * sizeof(float) > CACHE_OPTIMIZE_THRESHOLD;
 #else
@@ -301,7 +303,7 @@ void d_simple_path_reverse_integral_batch_TOF(
   const auto rois =
       cacheOptimize ? select_roi_by_8_pars(__img.grid.bounding_box()) : std::vector<cubef>{__img.grid.bounding_box()};
   for (const auto &roi : rois)
-    d_osem_path_reverse_integral_batch_TOF_fov(__img, __events, __sample_rate, roi);
+    d_osem_path_reverse_integral_batch_TOF_fov(__img, __events, __sample_rate, TOFBinWid_ps, roi);
 }
 #undef USE_CACHE_OPTIMIZE
 

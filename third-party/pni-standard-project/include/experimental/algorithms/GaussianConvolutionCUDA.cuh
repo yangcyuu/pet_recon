@@ -18,6 +18,7 @@ inline void conv_1d_impl(
       const auto coef = __valueEmbedded[__gridsEmbedded.size(index_delta - delta_span.begins)];
       sum_coef += coef;
       sum_value += __in[__grids.size[index_image]] * coef;
+      // printf("coef: %f, value: %f\n", coef, __in[__grids.size[index_image]]);
     }
     __out[__grids.size[index]] = sum_value / sum_coef;
   });

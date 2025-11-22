@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="GeoCorrParams">
+    <Geo_angle type="double" />
+    <Geo_offsetU type="double" />
+    <Geo_offsetV type="double" />
+    <Geo_SDD type="double" />
+    <Geo_SOD type="double" />
+</Main>

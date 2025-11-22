@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="NormalizationParams">
+    <RadialModuleNumS  type="int" />
+    <FActCorrCutLow type="double" />
+    <FActCorrCutHigh type="double" />
+    <FCoffCutLow type="double" />
+    <FCoffCutHigh type="double" />
+    <BadChannelThreshold type="double" />
+    <DoSelfNormalization type="bool" />
+    <DoDeadTimeCorrection type="bool" />
+</Main>

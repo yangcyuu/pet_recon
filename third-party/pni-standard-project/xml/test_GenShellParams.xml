@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="ShellParams">
+    <InnerRadius type="int" />
+    <OuterRadius type="int" />
+    <AxialLength type="int" />
+    <ParallaxScannerRadial type="double" />
+    <ShellGridsX type="double" />
+    <ShellGridsY type="double" />
+    <ShellGridsZ type="double" />
+    <ShellGridsNumX type="int" />
+    <ShellGridsNumY type="int" />
+    <ShellGridsNumZ type="int" />
+</Main>

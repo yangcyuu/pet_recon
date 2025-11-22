@@ -23,6 +23,7 @@ struct Vector {
     static_assert(sizeof...(Args) == N, "Number of arguments must match vector dimension");
     return Vector{static_cast<T>(args)...};
   }
+
   template <typename... Args>
   __PNI_CUDA_MACRO__ constexpr Vector<T, N + sizeof...(Args)> right_expand(
       Args... args) const {

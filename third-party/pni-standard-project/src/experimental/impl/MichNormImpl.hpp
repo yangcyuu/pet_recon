@@ -28,7 +28,6 @@ public:
   // , m_shellMichHelper(__mich)
   {}
   ~MichNormalization_impl() {};
-  std::unique_ptr<MichNormalization_impl> copy();
 
 public:
   void setShell(                    // 设置壳体的尺寸
@@ -48,7 +47,7 @@ public:
   void bindShellFwdMich(float *fwdMich);
   void bindSelfNormMich(float *delayMich);
   void addSelfNormListmodes(std::span<basic::Listmode_t const> listmodes);
-  std::unique_ptr<float[]> getActivityMich();
+  std::unique_ptr<float[]> dumpActivityMich();
   std::unique_ptr<float[]> dumpNormalizationMich();
   float const *getHNormFactorsBatch(std::span<core::MichStandardEvent const> events, FactorBitMask im);
   float const *getDNormFactorsBatch(std::span<core::MichStandardEvent const> events, FactorBitMask im);
@@ -64,6 +63,14 @@ public:
   std::unique_ptr<float[]> dumpPlaneFctMich();
   std::unique_ptr<float[]> dumpInterferenceFctMich();
   std::unique_ptr<float[]> dumpDTComponentMich();
+  std::vector<float> dumpCryCount();
+  std::vector<float> dumpBlockFctA();
+  std::vector<float> dumpBlockFctT();
+  std::vector<float> dumpPlaneFct();
+  std::vector<float> dumpRadialFct();
+  std::vector<float> dumpInterferenceFct();
+  std::vector<float> dumpCryFct();
+
   std::unique_ptr<float[]> dumpFactors(FactorBitMask im);
 
 private:
@@ -390,7 +397,7 @@ inline bool MichNormalization_impl::generateDeadTimeComponent() {
   m_deadTimeGenerated = true;
   return true;
 }
-inline std::unique_ptr<float[]> MichNormalization_impl::getActivityMich() {
+inline std::unique_ptr<float[]> MichNormalization_impl::dumpActivityMich() {
   if (std::holds_alternative<float *>(m_componentFwdSource))
     return host_deep_copy(std::get<float *>(m_componentFwdSource), MichInfoHub(m_michDefine).getLORNum());
   else
@@ -416,6 +423,48 @@ inline std::unique_ptr<float[]> MichNormalization_impl::dumpInterferenceFctMich(
 }
 inline std::unique_ptr<float[]> MichNormalization_impl::dumpDTComponentMich() {
   return dumpFactors(FactorBitMask::DTComponent);
+}
+inline std::vector<float> MichNormalization_impl::dumpCryCount() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_cryCount;
+}
+inline std::vector<float> MichNormalization_impl::dumpBlockFctA() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_blockFctA;
+}
+inline std::vector<float> MichNormalization_impl::dumpBlockFctT() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_blockFctT;
+}
+inline std::vector<float> MichNormalization_impl::dumpPlaneFct() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_planeFct;
+}
+inline std::vector<float> MichNormalization_impl::dumpRadialFct() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_radialFct;
+}
+inline std::vector<float> MichNormalization_impl::dumpInterferenceFct() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_interferenceFct;
+}
+inline std::vector<float> MichNormalization_impl::dumpCryFct() {
+  generateNormalization();
+  checkOrThrowGenerateFlags();
+
+  return m_cryFct;
 }
 inline std::unique_ptr<float[]> MichNormalization_impl::dumpFactors(
     FactorBitMask im) {
@@ -454,7 +503,6 @@ inline void MichNormalization_impl::setShell(
   std::ofstream outFile("source.Img", std::ios::binary);
   outFile.write(reinterpret_cast<char *>(shellImage.data()), shellImage.size() * sizeof(float));
   outFile.close();
-  std::cout << "Shell image created, total voxel num: " << shellImage.size() << std::endl;
   // do fwd projection to get fwd mich
   m_fwdInside.resize(MichInfoHub(shellPolygonMich).getLORNum(), 0.f);
   auto michInfo = MichInfoHub(shellPolygonMich);
@@ -655,37 +703,6 @@ inline void MichNormalization_impl::checkDeviceFactors() {
     }
     m_normFactorInDevice = true;
   }
-}
-
-inline std::unique_ptr<MichNormalization_impl> MichNormalization_impl::copy() {
-  std::lock_guard __lock(m_mutex);
-  generateNormalization();
-  checkOrThrowGenerateFlags();
-  auto new_impl = std::make_unique<MichNormalization_impl>(m_michDefine);
-  new_impl->m_cryCount = m_cryCount;
-  new_impl->m_blockFctA = m_blockFctA;
-  new_impl->m_blockFctT = m_blockFctT;
-  new_impl->m_planeFct = m_planeFct;
-  new_impl->m_radialFct = m_radialFct;
-  new_impl->m_interferenceFct = m_interferenceFct;
-  new_impl->m_cryFct = m_cryFct;
-  new_impl->m_selfBlockFctA = m_selfBlockFctA;
-  new_impl->m_selfBlockFctT = m_selfBlockFctT;
-  new_impl->m_dtComponent = m_dtComponent;
-  new_impl->m_fActCorrCutLow = m_fActCorrCutLow;
-  new_impl->m_fActCorrCutHigh = m_fActCorrCutHigh;
-  new_impl->m_fCoffCutLow = m_fCoffCutLow;
-  new_impl->m_fCoffCutHigh = m_fCoffCutHigh;
-  new_impl->m_BadChannelThreshold = m_BadChannelThreshold;
-  new_impl->m_radialModuleNumS = m_radialModuleNumS;
-  new_impl->m_normFactorGenerated = m_normFactorGenerated;
-  new_impl->m_selfNormGenerated = m_selfNormGenerated;
-  new_impl->m_deadTimeGenerated = m_deadTimeGenerated;
-  // No source binding in the copy, because the source may in other thread.
-  new_impl->m_deadTimeTable = m_deadTimeTable;
-  // No device factors in the copy, because the device factors may in other thread or stream.
-  new_impl->m_normFactorInDevice = false;
-  return new_impl;
 }
 
 } // namespace openpni::experimental::node

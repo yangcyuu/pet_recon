@@ -11,8 +11,8 @@
 #include <semaphore>
 
 #include "IPSetting.hpp"
+#include "include/misc/CycledBuffer.hpp"
 #include "include/process/Acquisition.hpp"
-#include "src/common/CycledBuffer.hpp"
 namespace openpni::process::dpdk {
 inline uint32_t ipString2Int(
     const std::string &ip) {

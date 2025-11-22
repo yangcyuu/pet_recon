@@ -8,6 +8,15 @@ const char *fileMichName = "shell_fwd.bin";
 const int fileMichOffset = 0;
 // const int fileMichOffset = 6;
 using namespace openpni::experimental;
+int16_t calTOFDevFormCTR(
+    int16_t CTR) {
+  return CTR / 2.355f / 1.4142f; // FWHM to stddev, divide sqrt(2)
+}
+int16_t calTOFDevFormUnitDev(
+    int16_t UnitDev) {
+  return UnitDev / 1.4142f; // UnitSigma = sqrt(sigma1^2 + sigma2^2), here sigma1=sigma2
+}
+
 int main() {
   auto e180 = E180();
   auto michInfo = core::MichInfoHub::create(e180);

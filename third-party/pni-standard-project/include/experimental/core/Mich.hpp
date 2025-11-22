@@ -679,6 +679,8 @@ struct MichInfoHub {
   __PNI_CUDA_MACRO__ uint32_t getBlockNumZInPanel() const { return mich::getBlockNumZInPanel(polygon, detector); }
   __PNI_CUDA_MACRO__ uint32_t getBlockNumYInPanel() const { return mich::getBlockNumYInPanel(polygon, detector); }
   __PNI_CUDA_MACRO__ uint32_t getBlockNumInPanel() const { return getBlockNumZInPanel() * getBlockNumYInPanel(); }
+  __PNI_CUDA_MACRO__
+  int getTotalDetectorNum() const { return polygon.edges * polygon.detectorPerEdge * polygon.detectorRings; }
 };
 
 struct MichStandardEvent {

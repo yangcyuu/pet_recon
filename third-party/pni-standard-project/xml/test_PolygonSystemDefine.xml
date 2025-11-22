@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="PolygonalSystem">
+    <Edges type="int" />
+    <DetectorPerEdge type="int" />
+    <DetectorLen type="double" />
+    <Radius type="double" />
+    <AngleOf1stPerp type="double" />
+    <DetectorRings type="int" />
+    <RingDistance type="double" />
+    <DetectorBlockNumU type="int" />
+    <DetectorBlockNumV type="int" />
+    <DetectorBlockSizeU type="double" />
+    <DetectorBlockSizeV type="double" />
+    <DetectorCrystalNumU type="int" />
+    <DetectorCrystalNumV type="int" />
+    <DetectorCrystalSizeU type="double" />
+    <DetectorCrystalSizeV type="double" />
+
+</Main>

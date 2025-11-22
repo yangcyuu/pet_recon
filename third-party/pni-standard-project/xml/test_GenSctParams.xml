@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="scatParams">
+    <SSSGridsX  type="double" />
+    <SSSGridsY  type="double" />
+    <SSSGridsZ  type="double" />
+    <SSSGridsNumX  type="int" />
+    <SSSGridsNumY  type="int" />
+    <SSSGridsNumZ  type="int" />
+    <MinSectorDifference  type="int" />
+    <TaiFittingThreshold  type="double" />
+    <ScatterPointsThreshold type="double" />
+    <ScatterEnergyWindowLow type="double" />
+    <ScatterEnergyWindowHigh type="double" />
+    <ScatterEnergyWindowResolution type="double" />
+    <ScatterEffTableEnergyLow type="double" />
+    <ScatterEffTableEnergyHigh type="double" />
+    <ScatterEffTableEnergyInterval type="double" />
+</Main>

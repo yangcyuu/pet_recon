@@ -8,13 +8,21 @@ class MichRandom {
 public:
   MichRandom(const core::MichDefine &mich);
   MichRandom(std::unique_ptr<MichRandom_impl> impl);
-  MichRandom(MichRandom &&) = default;
+  MichRandom(MichRandom &&) noexcept;
+  MichRandom &operator=(MichRandom &&) noexcept;
   ~MichRandom();
   MichRandom copy() const;
   std::unique_ptr<MichRandom> copyPtr();
 
 public:
-  void setRandomRatio(float);
+  // void setRandomRatio(float);
+  //  lgxtest
+  void setCountRatio(float countRatio);
+  void setTimeBinRatio(float timeBinRatio);
+  float getCountRatio();
+  float getTimeBinRatio();
+  //
+
   void setMinSectorDifference(int minSectorDifference);
   void setRadialModuleNumS(int radialModuleNumS);
   void setBadChannelThreshold(float badChannelThreshold);

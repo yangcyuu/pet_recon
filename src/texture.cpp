@@ -1,138 +1,75 @@
-#include "texture.h"
 #include <filesystem>
+#include <format>
 #include <fstream>
-#include "cgmath.h"
 
-void Texture2D::save(const std::string &filename) const {
-  torch::Tensor tensor = this->tensor().detach().clone().permute({1, 2, 0}).contiguous(); // to [H, W, C]
-  if (tensor.dtype() != torch::kFloat32) {
-    tensor = tensor.to(torch::kFloat32);
-  }
-  if (!tensor.device().is_cpu()) {
-    tensor = tensor.to(torch::kCPU);
-  }
-  cv::Mat img(static_cast<int>(tensor.size(0)), static_cast<int>(tensor.size(1)),
-              CV_32FC(static_cast<int>(tensor.size(2))), tensor.data_ptr());
-  std::filesystem::path filepath = std::filesystem::absolute(filename);
-  if (!std::filesystem::exists(filepath.parent_path())) {
-    std::filesystem::create_directories(filepath.parent_path());
-  }
-  if (filepath.extension() != ".exr" && filepath.extension() != ".hdr") {
-    for (int y = 0; y < img.rows; ++y) {
-      for (int x = 0; x < img.cols; ++x) {
-        for (int c = 0; c < img.channels(); ++c) {
-          switch (img.channels()) {
-            case 1: {
-              img.at<float>(y, x) = linear_to_gamma(img.at<float>(y, x));
-              break;
-            }
-            case 2: {
-              img.at<cv::Vec2f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec2f>(y, x)[c]);
-              break;
-            }
-            case 3: {
-              img.at<cv::Vec3f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec3f>(y, x)[c]);
-              break;
-            }
-            case 4: {
-              img.at<cv::Vec4f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec4f>(y, x)[c]);
-              break;
-            }
-            default: {
-              ERROR_AND_EXIT("Texture2D::save: unsupported number of channels {}", img.channels());
-            }
-          }
-        }
-      }
-    }
-    cv::Mat img_u8;
-    img.convertTo(img_u8, CV_8U);
-    if (!cv::imwrite(filename, img_u8)) {
-      ERROR_AND_EXIT("Texture2D::save: failed to save image to {}", filename);
-    }
-    return;
-  }
-  if (!cv::imwrite(filename, img)) {
-    ERROR_AND_EXIT("Texture2D::save: failed to save image to {}", filename);
-  }
+#include "texture.h"
+
+torch::Tensor Texture2D::eval(const torch::Tensor &uv, const TextureEvalParams &params) const {
+  torch::Tensor grid = uv.unsqueeze(0).unsqueeze(2); // [1, N, 1, 2]
+
+  torch::Tensor texture = _data.permute({2, 0, 1}).unsqueeze(0); // [1, C, H, W]
+
+  // [1, C, N, 1]
+  torch::Tensor sampled = torch::nn::functional::grid_sample(texture, grid,
+                                                             torch::nn::functional::GridSampleFuncOptions()
+                                                                 .mode(params.mode)
+                                                                 .padding_mode(params.padding_mode)
+                                                                 .align_corners(params.align_corners));
+
+  sampled = sampled.squeeze(0).squeeze(-1).permute({1, 0}).contiguous(); // [N, C]
+
+  return sampled;
 }
 
-void Texture3D::save(const std::string &filename) const {
-  torch::Tensor tensor = this->tensor().detach().clone().permute({1, 2, 3, 0}).contiguous(); // to [D, H, W, C]
-  if (tensor.dtype() != torch::kFloat32) {
-    tensor = tensor.to(torch::kFloat32);
+void Texture2D::save_rawdata(const std::string &filename) const {
+  torch::Tensor data = _data.detach().cpu();
+  if (data.dtype() != torch::kFloat32) {
+    data = data.to(torch::kFloat32);
   }
-  if (!tensor.device().is_cpu()) {
-    tensor = tensor.to(torch::kCPU);
-  }
-  std::filesystem::path dir = std::filesystem::absolute(filename);
-  if (!std::filesystem::exists(dir.parent_path())) {
-    std::filesystem::create_directories(dir.parent_path());
-  }
-  for (int d = 0; d < tensor.size(0); ++d) {
-    cv::Mat img(static_cast<int>(tensor.size(1)), static_cast<int>(tensor.size(2)),
-                CV_32FC(static_cast<int>(tensor.size(3))),
-                tensor.data_ptr<float>() + d * tensor.size(1) * tensor.size(2) * tensor.size(3));
-    auto slice_dir = dir;
-    slice_dir.replace_filename(std::format("{}_{:06}{}", dir.stem().string(), d, dir.extension().string()));
-    if (dir.extension() != ".exr" && dir.extension() != ".hdr") {
-      for (int y = 0; y < img.rows; ++y) {
-        for (int x = 0; x < img.cols; ++x) {
-          for (int c = 0; c < img.channels(); ++c) {
-            switch (img.channels()) {
-              case 1: {
-                img.at<float>(y, x) = linear_to_gamma(img.at<float>(y, x));
-                break;
-              }
-              case 2: {
-                img.at<cv::Vec2f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec2f>(y, x)[c]);
-                break;
-              }
-              case 3: {
-                img.at<cv::Vec3f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec3f>(y, x)[c]);
-                break;
-              }
-              case 4: {
-                img.at<cv::Vec4f>(y, x)[c] = linear_to_gamma(img.at<cv::Vec4f>(y, x)[c]);
-                break;
-              }
-              default: {
-                ERROR_AND_EXIT("Texture3D::save: unsupported number of channels {}", img.channels());
-              }
-            }
-          }
-        }
-      }
-      cv::Mat img_u8;
-      img.convertTo(img_u8, CV_8U);
-      if (!cv::imwrite(slice_dir.string(), img_u8)) {
-        ERROR_AND_EXIT("Texture3D::save: failed to save image to {}", slice_dir.string());
-      }
-      continue;
-    }
-    if (!cv::imwrite(slice_dir.string(), img)) {
-      ERROR_AND_EXIT("Texture3D::save: failed to save image to {}", slice_dir.string());
-    }
-  }
-}
-
-void Texture3D::save_rawdata(const std::string_view filename) const {
-  torch::Tensor tensor = this->tensor().detach().clone().permute({1, 2, 3, 0}).contiguous(); // to [D, H, W, C]
-  if (tensor.dtype() != torch::kFloat32) {
-    tensor = tensor.to(torch::kFloat32);
-  }
-  if (!tensor.device().is_cpu()) {
-    tensor = tensor.to(torch::kCPU);
-  }
+  data = data.contiguous();
   std::filesystem::path filepath = std::filesystem::absolute(filename);
   if (!std::filesystem::exists(filepath.parent_path())) {
     std::filesystem::create_directories(filepath.parent_path());
   }
   std::ofstream ofs(filepath, std::ios::binary);
   if (!ofs) {
-    ERROR_AND_EXIT("Texture3D::save_rawdata: failed to open file {}", filename);
+    ERROR_AND_EXIT("Failed to open file for writing: {}", filepath.string());
   }
-  ofs.write(static_cast<const char *>(tensor.data_ptr()), tensor.numel() * sizeof(float));
-  ofs.flush();
+  ofs.write(static_cast<const char *>(data.data_ptr()), data.numel() * sizeof(float));
+  ofs.close();
+}
+
+torch::Tensor Texture3D::eval(const torch::Tensor &uvw, const TextureEvalParams &params) const {
+  torch::Tensor grid = uvw.unsqueeze(0).unsqueeze(2).unsqueeze(2); // [1, N, 1, 1, 3]
+
+  torch::Tensor texture = _data.permute({3, 0, 1, 2}).unsqueeze(0); // [1, C, D, H, W]
+
+  // [1, C, N, 1, 1]
+  torch::Tensor sampled = torch::nn::functional::grid_sample(texture, grid,
+                                                             torch::nn::functional::GridSampleFuncOptions()
+                                                                 .mode(params.mode)
+                                                                 .padding_mode(params.padding_mode)
+                                                                 .align_corners(params.align_corners));
+
+  sampled = sampled.squeeze(0).squeeze(-1).squeeze(-1).permute({1, 0}).contiguous(); // [N, C]
+
+  return sampled;
+}
+
+void Texture3D::save_rawdata(const std::string &filename) const {
+  torch::Tensor data = _data.detach().cpu();
+  if (data.dtype() != torch::kFloat32) {
+    data = data.to(torch::kFloat32);
+  }
+  data = data.contiguous();
+  std::filesystem::path filepath = std::filesystem::absolute(filename);
+  if (!std::filesystem::exists(filepath.parent_path())) {
+    std::filesystem::create_directories(filepath.parent_path());
+  }
+  std::ofstream ofs(filepath, std::ios::binary);
+  if (!ofs) {
+    ERROR_AND_EXIT("Failed to open file for writing: {}", filepath.string());
+  }
+  ofs.write(static_cast<const char *>(data.data_ptr()), data.numel() * sizeof(float));
   ofs.close();
 }

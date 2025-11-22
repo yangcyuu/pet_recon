@@ -33,6 +33,22 @@ public:
       float sigmaG2) {
     m_convKNN.setKNNSigmaG2(sigmaG2);
   }
+  void setHTensorDataIn(
+      core::TensorDataInput<float, 3> h_imageIO) {
+    m_convKNN.setHTensorDataIn(h_imageIO);
+  }
+  void setHTensorDataIn(
+      float *in_hptr, core::Grids<3> grid) {
+    m_convKNN.setHTensorDataIn(in_hptr, grid);
+  }
+  void setDTensorDataIn(
+      core::TensorDataInput<float, 3> d_imageIn) {
+    m_convKNN.setDTensorDataIn(d_imageIn);
+  }
+  void setDTensorDataIn(
+      float *in_dptr, core::Grids<3> grid) {
+    m_convKNN.setDTensorDataIn(in_dptr, grid);
+  }
 
 public:
   void convH(
@@ -87,6 +103,22 @@ void KGConv3D::setKNNSearchSizeHalf(
 void KGConv3D::setKNNSigmaG2(
     float sigmaG2) {
   m_impl->setKNNSigmaG2(sigmaG2);
+}
+void KGConv3D::setHTensorDataIn(
+    core::TensorDataInput<float, 3> h_imageIO) {
+  m_impl->setHTensorDataIn(h_imageIO);
+}
+void KGConv3D::setHTensorDataIn(
+    float *in_hptr, core::Grids<3> grid) {
+  m_impl->setHTensorDataIn(in_hptr, grid);
+}
+void KGConv3D::setDTensorDataIn(
+    core::TensorDataInput<float, 3> d_imageIn) {
+  m_impl->setDTensorDataIn(d_imageIn);
+}
+void KGConv3D::setDTensorDataIn(
+    float *in_dptr, core::Grids<3> grid) {
+  m_impl->setDTensorDataIn(in_dptr, grid);
 }
 void KGConv3D::convH(
     core::TensorDataIO<float, 3> __image) {

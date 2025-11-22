@@ -88,7 +88,9 @@ void h_knn_conv(
   tools::parallel_for_each(__imageSize, [&](std::size_t index) {
     float result = 0.f;
     for (int i = 0; i < __knnNumbers; i++) {
-      result += __knnValue[index * __knnNumbers + i] * __inImage[__knnTo[index * __knnNumbers + i]];
+      auto toIndex = __knnTo[index * __knnNumbers + i];
+      auto weight = __knnValue[index * __knnNumbers + i];
+      result += weight * __inImage[toIndex];
     }
     __outImage[index] = result;
   });

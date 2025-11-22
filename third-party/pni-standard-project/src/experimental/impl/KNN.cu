@@ -38,7 +38,6 @@ void d_feature_matrix_normalize(
   auto imageSpan = __featureMatrixSpan.left_shrink<3>();
   auto featureSpan = __featureMatrixSpan.right_shrink<3>();
 
-  int count = 0;
   for (const auto feature_index : featureSpan) {
     auto featureMean = thrust::transform_reduce(
         thrust::cuda::par.on(basic::cuda_ptr::default_stream()), thrust::counting_iterator<std::size_t>(0),
@@ -123,7 +122,9 @@ void d_knn_conv(
   tools::parallel_for_each_CUDA(__imageSize, [=] __device__(std::size_t index) {
     float result = 0.f;
     for (int i = 0; i < __knnNumbers; i++) {
-      result += __knnValue[index * __knnNumbers + i] * __inImage[__knnTo[index * __knnNumbers + i]];
+      auto toIndex = __knnTo[index * __knnNumbers + i];
+      auto weight = __knnValue[index * __knnNumbers + i];
+      result += weight * __inImage[toIndex];
     }
     __outImage[index] = result;
   });
@@ -131,7 +132,7 @@ void d_knn_conv(
 void d_knn_deconv(
     float const *__knnValue, std::size_t const *__knnTo, int __knnNumbers, float const *__inImage,
     std::size_t __imageSize, float *__outImage) {
-  example::d_parralel_fill(__outImage, 0.f, __imageSize);
+  example::d_parallel_fill(__outImage, 0.f, __imageSize);
   tools::parallel_for_each_CUDA(__imageSize, [=] __device__(std::size_t index) {
     for (int i = 0; i < __knnNumbers; i++) {
       auto toIndex = __knnTo[index * __knnNumbers + i];

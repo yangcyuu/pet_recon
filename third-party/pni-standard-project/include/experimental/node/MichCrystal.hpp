@@ -12,7 +12,6 @@ public:
 
 public:
   core::MichDefine mich() const;
-  MichCrystal copy() const;
 
 public:
   core::CrystalGeom const *getHCrystalsBatch(std::span<std::size_t const> __lors) const;

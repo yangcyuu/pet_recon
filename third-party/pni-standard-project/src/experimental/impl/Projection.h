@@ -28,7 +28,8 @@ __PNI_CUDA_MACRO__ inline float instant_path_integral(
   constexpr float sample_rate = 1.5f; // 每个体素采样点数
   const int sample_num =
       core::FMath<int>::max(3, line_segment.getLength() / __img.grid.spacing.l1() * tools::sqrt3 * sample_rate);
-  core::SamplingUniform<float> sampler = core::SamplingUniform<float>::create(0, 1, sample_num, __bias);
+  core::SamplingUniform<float> sampler =
+      core::SamplingUniform<float>::create(0, 1, sample_num, line_segment.getLength(), __bias);
   core::InterpolationNearestGetter<float, 3> interpolator(__img);
   return algorithms::calculate_path_integrals_impl(line_segment, __img, sampler, interpolator);
 }
@@ -52,7 +53,8 @@ __PNI_CUDA_MACRO__ inline float simple_path_integral(
       core::DirectionalLineSegment<float, 3>::create_by_two_points_and_range(point1, point2, amin, amax);
   const int sample_num =
       core::FMath<int>::max(3, line_segment.getLength() / img.grid.spacing.l1() * tools::sqrt3 * sample_rate);
-  core::SamplingUniform<float> sampler = core::SamplingUniform<float>::create(0, 1, sample_num, bias);
+  core::SamplingUniform<float> sampler =
+      core::SamplingUniform<float>::create(0, 1, sample_num, line_segment.getLength(), bias);
   core::InterpolationNearestGetter<float, 3> interpolator(img);
   return algorithms::calculate_path_integrals_impl(line_segment, img, sampler, interpolator);
 }
@@ -73,7 +75,8 @@ __PNI_CUDA_MACRO__ inline void simple_reverse_path_integral(
       core::DirectionalLineSegment<float, 3>::create_by_two_points_and_range(point1, point2, amin, amax);
   const int sample_num =
       core::FMath<int>::max(3, line_segment.getLength() / img.grid.spacing.l1() * tools::sqrt3 * sample_rate);
-  core::SamplingUniform<float> sampler = core::SamplingUniform<float>::create(0, 1, sample_num, bias);
+  core::SamplingUniform<float> sampler =
+      core::SamplingUniform<float>::create(0, 1, sample_num, line_segment.getLength(), bias);
   core::InterpolationNearestSetter<float, 3> interpolator(img);
   algorithms::calculate_path_reverse_integrals_impl(line_segment, img, value, sampler, interpolator);
 }
@@ -91,7 +94,7 @@ __PNI_CUDA_MACRO__ inline void simple_reverse_path_integral(
 __PNI_CUDA_MACRO__ inline float simple_path_integral_TOF(
     float bias, float sample_rate, core::Image3DInput<float> img, const core::Vector<float, 3> &point1,
     const core::Vector<float, 3> &point2, core::Vector<int16_t, 2> &pair_tofMean, core::Vector<int16_t, 2> &pair_tofDev,
-    int16_t deltaTOF, cubef __roi) {
+    int16_t deltaTOF, int16_t TOFBinWid_ps, cubef __roi) {
   auto [amin, amax] = algorithms::liang_barskey_3d(__roi, point1, point2);
   if (amax <= amin)
     return 0;
@@ -102,7 +105,9 @@ __PNI_CUDA_MACRO__ inline float simple_path_integral_TOF(
       core::FMath<int>::max(3, line_segment.getLength() / img.grid.spacing.l1() * tools::sqrt3 * sample_rate);
   float distance_cry1_cry2 = algorithms::l2(point2 - point1);
   core::SamplingUniformWithTOF<float> sampler = core::SamplingUniformWithTOF<float>::create(
-      amin, amax, sample_num, distance_cry1_cry2, pair_tofMean, pair_tofDev, deltaTOF, bias);
+      amin, amax, sample_num, distance_cry1_cry2, pair_tofMean, pair_tofDev, deltaTOF, TOFBinWid_ps, bias);
+  if (amin > sampler.get_alpha_max() || amax < sampler.get_alpha_min())
+    return 0;
   core::InterpolationNearestGetter<float, 3> interpolator(img);
   return algorithms::calculate_path_integrals_impl(line_segment, img, sampler, interpolator);
 }
@@ -110,7 +115,7 @@ __PNI_CUDA_MACRO__ inline float simple_path_integral_TOF(
 __PNI_CUDA_MACRO__ inline void simple_reverse_path_integral_TOF(
     float bias, float sample_rate, float value, core::Image3DOutput<float> img, const core::Vector<float, 3> &point1,
     const core::Vector<float, 3> &point2, core::Vector<int16_t, 2> &pair_tofMean, core::Vector<int16_t, 2> &pair_tofDev,
-    int16_t deltaTOF, cubef __roi) {
+    int16_t deltaTOF, uint16_t TOFBinWid_ps, cubef __roi) {
   auto [amin, amax] = algorithms::liang_barskey_3d(__roi, point1, point2);
   if (amax <= amin)
     return;
@@ -121,7 +126,7 @@ __PNI_CUDA_MACRO__ inline void simple_reverse_path_integral_TOF(
       core::FMath<int>::max(3, line_segment.getLength() / img.grid.spacing.l1() * tools::sqrt3 * sample_rate);
   float distance_cry1_cry2 = algorithms::l2(point2 - point1);
   core::SamplingUniformWithTOF<float> sampler = core::SamplingUniformWithTOF<float>::create(
-      amin, amax, sample_num, distance_cry1_cry2, pair_tofMean, pair_tofDev, deltaTOF, bias);
+      amin, amax, sample_num, distance_cry1_cry2, pair_tofMean, pair_tofDev, deltaTOF, TOFBinWid_ps, bias);
   core::InterpolationNearestSetter<float, 3> interpolator(img);
   algorithms::calculate_path_reverse_integrals_impl(line_segment, img, value, sampler, interpolator);
 }
@@ -171,9 +176,10 @@ void d_simple_path_reverse_integral_batch(core::TensorDataOutput<float, 3> __img
                                           std::span<core::MichStandardEvent const> __events, float __sample_rate);
 void d_simple_path_integral_batch_TOF(core::TensorDataInput<float, 3> __img,
                                       std::span<core::MichStandardEvent const> __events, float __sample_rate,
-                                      float *__out_values);
+                                      int16_t TOFBinWid_ps, float *__out_values);
 void d_simple_path_reverse_integral_batch_TOF(core::TensorDataOutput<float, 3> __img,
-                                              std::span<core::MichStandardEvent const> __events, float __sample_rate);
+                                              std::span<core::MichStandardEvent const> __events, float __sample_rate,
+                                              int16_t TOFBinWid_ps);
 float d_cal_update_measurements(float const *__updateImage, float const *__senmapImage, std::size_t count);
 void d_count_from_listmode(std::span<basic::Listmode_t const> __listmodes, std::size_t const *__lorids,
                            core::MichDefine __michDefine, float *__out_counts);

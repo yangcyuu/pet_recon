@@ -1,4 +1,5 @@
 #include "MichFactors.hpp"
+#include "MichScatterImpl.hpp"
 #include "include/experimental/tools/Parallel.cuh"
 namespace openpni::experimental::node::impl {
 void d_calNormFactorsAll(
@@ -19,6 +20,29 @@ void d_getDScatterFactorsBatch(
   tools::parallel_for_each_CUDA(events.size(), [=, d_events = events.data()] __device__(size_t idx) {
     auto lorIndex = coverter.getLORIDFromRectangleID(d_events[idx].crystal1, d_events[idx].crystal2);
     __outFct[idx] = __sssValue[lorIndex];
+  });
+}
+void d_getDScatterFactorsBatchTOF(
+    float *__outFct, const float *__sssTOFTable, const core::CrystalGeom *__d_crystalGeometry,
+    const core::CrystalGeom *__d_dsCrystalGeometry, std::span<core::MichStandardEvent const> __events,
+    core::MichDefine __michDefine, core::MichDefine __dsmichDefine, float __tofBinWidth_ns, int __tofBinNum) {
+  const auto michInfo = MichInfoHub(__michDefine);
+  const auto dsMichInfo = MichInfoHub(__dsmichDefine);
+  const auto coverter = core::IndexConverter::create(__michDefine);
+
+  auto fullSliceDsLorNum = dsMichInfo.getBinNum() * dsMichInfo.getViewNum() * michInfo.getSliceNum();
+
+  tools::parallel_for_each_CUDA(__events.size(), [=, d_events = __events.data()] __device__(size_t idx) {
+    int tofbinIdx = int(floor((d_events[idx].tof *1e-3)/ __tofBinWidth_ns + 0.5)) + int(__tofBinNum / 2);
+    if(tofbinIdx <0 || tofbinIdx >= __tofBinNum){
+      //printf("tofbinIdx out of range: %d for tofBinNum %d,at tof %f,tofBinWidth = %f\n", tofbinIdx,__tofBinNum, d_events[idx].tof*1e-3, __tofBinWidth_ns);
+      __outFct[idx] = 0.0f;
+      return;
+    }
+    auto lorIndex = coverter.getLORIDFromRectangleID(d_events[idx].crystal1, d_events[idx].crystal2);
+   float value = get2DInterpolationUpsamplingValue(__sssTOFTable + tofbinIdx * fullSliceDsLorNum, lorIndex, __michDefine,
+                                          __dsmichDefine, __d_crystalGeometry, __d_dsCrystalGeometry);
+    __outFct[idx] = value;
   });
 }
 } // namespace openpni::experimental::node::impl

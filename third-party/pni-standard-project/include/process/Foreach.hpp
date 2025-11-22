@@ -134,6 +134,16 @@ struct CBCTWeight {
 };
 
 template <FloatingPoint_c ValueType, FloatingPoint_c InputValueType>
+struct CBCTNormalize {
+  const ValueType scale;
+  InputValueType *input;
+  __PNI_CUDA_MACRO__ InputValueType operator()(
+      std::size_t i) const {
+    return input[i] * scale;
+  }
+};
+
+template <FloatingPoint_c ValueType, FloatingPoint_c InputValueType>
 struct CBCTPostProcess {
   const ValueType fCTSlope;
   const ValueType fCTIntercept;
@@ -220,9 +230,9 @@ struct CBCTCO {
       float ylw = float(yhigh) - y;
       float zlw = float(zhigh) - z;
       // To prevent crossing the image boundary
-      xhigh = std::min(xhigh, int(voxelNum.x - 1));
-      yhigh = std::min(yhigh, int(voxelNum.y - 1));
-      zhigh = std::min(zhigh, int(voxelNum.z - 1));
+      xhigh = xhigh < int(voxelNum.x - 1) ? xhigh : int(voxelNum.x - 1);
+      yhigh = yhigh < int(voxelNum.y - 1) ? yhigh : int(voxelNum.y - 1);
+      zhigh = zhigh < int(voxelNum.z - 1) ? zhigh : int(voxelNum.z - 1);
 
       return input[xlow + ylow * voxelNum.x + zlow * voxelNum.x * voxelNum.y] * xlw * ylw * zlw +
              input[xhigh + ylow * voxelNum.x + zlow * voxelNum.x * voxelNum.y] * xhw * ylw * zlw +

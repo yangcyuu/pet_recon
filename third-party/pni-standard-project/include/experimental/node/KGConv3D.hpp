@@ -16,6 +16,10 @@ public:
   void setFeatureSizeHalf(core::Vector<int64_t, 3> featureSizeHalf);
   void setKNNSearchSizeHalf(core::Vector<int64_t, 3> searchSizeHalf);
   void setKNNSigmaG2(float sigmaG2);
+  void setHTensorDataIn(core::TensorDataInput<float, 3> h_imageIO);
+  void setHTensorDataIn(float *in_hptr, core::Grids<3> grid);
+  void setDTensorDataIn(core::TensorDataInput<float, 3> d_imageIn);
+  void setDTensorDataIn(float *in_dptr, core::Grids<3> grid);
 
 public:
   void convH(core::TensorDataIO<float, 3> __image) override;

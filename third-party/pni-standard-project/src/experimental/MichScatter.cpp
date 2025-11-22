@@ -13,6 +13,9 @@ MichScatter::~MichScatter() {}
 MichScatter::MichScatter(
     std::unique_ptr<MichScatter_impl> impl)
     : m_impl(std::move(impl)) {}
+MichScatter::MichScatter(MichScatter &&) noexcept = default;
+MichScatter &MichScatter::operator=(
+    MichScatter &&) noexcept = default;
 
 void MichScatter::setScatterPointsThreshold(
     double v) {
@@ -93,12 +96,6 @@ std::unique_ptr<float[]> MichScatter::dumpScatterMich() {
 void MichScatter::bindDListmode(
     std::span<basic::Listmode_t const> listmodes) {
   m_impl->bindDListmode(listmodes);
-}
-MichScatter MichScatter::copy() {
-  return MichScatter(m_impl->copy());
-}
-std::unique_ptr<MichScatter> MichScatter::copyPtr() {
-  return std::make_unique<MichScatter>(m_impl->copy());
 }
 void MichScatter::setScatterPointGrid(
     core::Grids<3> grid) {

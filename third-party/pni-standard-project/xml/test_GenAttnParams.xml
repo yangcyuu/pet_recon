@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="AttnParams">
+    <UmapGridsX  type="double" />
+    <UmapGridsY  type="double" />
+    <UmapGridsZ  type="double" />
+    <UmapGridsNumX  type="int" />
+    <UmapGridsNumY  type="int" />
+    <UmapGridsNumZ  type="int" />
+    <UseHUMap type="bool" />
+    <UseCUDA type="bool" />
+</Main>

@@ -15,6 +15,7 @@
 #include "impl/Share.hpp"
 #include "impl/WrappedConv3D.h"
 #include "include/experimental/node/MichNorm.hpp"
+#include "src/common/Debug.h"
 
 using Grids3f = openpni::experimental::core::Grids<3, float>;
 #ifndef MichInfoHub
@@ -174,22 +175,6 @@ public:
   }
   ~MichSenmap_impl() = default;
 
-  std::unique_ptr<MichSenmap_impl> copy(
-      interface::Conv3D &__newConv3D) {
-    std::lock_guard lock(m_mutex);
-    auto result = std::make_unique<MichSenmap_impl>(m_michCrystal.mich(), __newConv3D);
-    result->m_subsetNum = m_subsetNum;
-    result->m_maxBufferedImages = m_maxBufferedImages;
-    for (auto iter = m_senmaps.begin(); iter != m_senmaps.end(); ++iter)
-      if (!iter->h_data)
-        borrow_senmap_from_device(iter); // Make sure all senmaps are host data.
-    result->m_senmaps = m_senmaps;       // When copying, all senmaps are host data.
-    result->m_normalization = nullptr;   // Do not copy normalization binding.
-    result->m_attn = nullptr;            // Do not copy attenuation binding.
-    result->m_source = m_source;
-    result->m_mode = m_mode;
-    return result;
-  }
   void join(
       MichSenmap_impl *other) {
     std::lock_guard ___(this->m_mutex);
@@ -353,8 +338,23 @@ private:
     SenmapItem item{grids, subsetIndex, m_mode};
     if (m_source == MichSenmap::Senmap_GPU) {
       item.d_data = d_createSenmap(grids, subsetIndex);
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_DUMP_SENMAP
+      {
+        static int index = 0;
+        PNI_DEBUG("Dumping senmap gpu to disk for debug\n");
+        debug::d_write_array_to_disk(item.d_data, std::format("debug_dump_senmap_gpu_{}.bin", index++));
+      }
+#endif
     } else {
       item.h_data = h_createSenmap(grids, subsetIndex);
+#if PNI_STANDARD_CONFIG_ENABLE_DEBUG_DUMP_SENMAP
+      {
+        static int index = 0;
+        PNI_DEBUG("Dumping senmap cpu to disk for debug\n");
+        debug::h_write_array_to_disk(item.h_data, grids.totalSize(),
+                                     std::format("debug_dump_senmap_cpu_{}.bin", index++));
+      }
+#endif
     }
     return item;
   }
@@ -462,14 +462,6 @@ void MichSenmap::clearCache() {
   m_impl->clearCache();
 }
 
-MichSenmap MichSenmap::copy(
-    interface::Conv3D &__conv3D) {
-  return MichSenmap(m_impl->copy(__conv3D));
-}
-void MichSenmap::join(
-    MichSenmap *other) {
-  m_impl->join(other->m_impl.get());
-}
 float MichSenmap::lastUpdateMeasurement() {
   return m_impl->last_update_measurement();
 }

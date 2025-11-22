@@ -1,3 +1,4 @@
+#include <filesystem> // 添加这个头文件
 #include <format>
 #include <iostream>
 
@@ -15,6 +16,8 @@ int main() {
       core::Vector<float, 3>::create(0, 0, 0), core::Vector<float, 3>::create(0.5, 0.5, 0.5),
       core::Vector<int64_t, 3>::create(340, 340, 440));
   helper.setGrids(grids);
+
+  std::cout << "Current working directory: " << std::filesystem::current_path() << std::endl;
 
   const auto lorNumPerSlice =
       core::MichInfoHub::create(mich).getBinNum() * core::MichInfoHub::create(mich).getViewNum();

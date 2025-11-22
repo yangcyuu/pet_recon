@@ -11,6 +11,9 @@ MichAttn::MichAttn(
     std::unique_ptr<MichAttn_impl> impl)
     : m_impl(std::move(impl)) {}
 
+MichAttn::MichAttn(MichAttn &&) noexcept = default;
+MichAttn &MichAttn::operator=(MichAttn &&) noexcept = default;
+
 void MichAttn::setMapSize(
     core::Grids<3> map) {
   m_impl->setMapSize(map);
@@ -70,12 +73,6 @@ void MichAttn::setFetchMode(
 // temp
 core::Grids<3> MichAttn::getMapGrids() {
   return m_impl->getMapGrids();
-}
-MichAttn MichAttn::copy() {
-  return MichAttn(m_impl->copy());
-}
-std::unique_ptr<MichAttn> MichAttn::copyPtr() {
-  return std::make_unique<MichAttn>(m_impl->copy());
 }
 
 } // namespace openpni::experimental::node

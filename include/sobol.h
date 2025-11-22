@@ -6,8 +6,8 @@ struct SobolEngine {
   static constexpr int MAXBIT = 30;
   static constexpr int MAXDIM = 21201;
 
-  SobolEngine(int64_t dimension, bool scramble = false, std::optional<uint64_t> seed = std::nullopt)
-          : _dimension(dimension), _scramble(scramble), _seed(seed) {
+  SobolEngine(int64_t dimension, bool scramble = false, std::optional<uint64_t> seed = std::nullopt) :
+      _dimension(dimension), _scramble(scramble), _seed(seed) {
     torch::Device device = torch::kCPU;
     _sobolstate = torch::zeros({_dimension, MAXBIT}, torch::dtype(torch::kLong).device(device));
     torch::_sobol_engine_initialize_state_(_sobolstate, _dimension);
@@ -65,7 +65,8 @@ private:
 
     _shift = torch::mv(shift, torch::pow(2, torch::arange(0, MAXBIT, torch::dtype(torch::kLong).device(device))));
 
-    torch::Tensor ltm = torch::randint(2, {_dimension, MAXBIT, MAXBIT}, gen, torch::dtype(torch::kLong).device(device)).tril();
+    torch::Tensor ltm =
+        torch::randint(2, {_dimension, MAXBIT, MAXBIT}, gen, torch::dtype(torch::kLong).device(device)).tril();
 
     torch::_sobol_engine_scramble_(_sobolstate, ltm, _dimension);
   }

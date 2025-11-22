@@ -1,9 +1,11 @@
 #include "include/experimental/node/KNNConv3D.hpp"
 
 #include <cstring>
+#include <format>
 
 #include "impl/KNN.h"
 #include "include/basic/CudaPtr.hpp"
+#include "src/common/Debug.h"
 namespace openpni::experimental::node {
 class KNNConv3D_impl {
 public:
@@ -28,11 +30,30 @@ public:
       float sigmaG2) {
     m_sigmaG2 = sigmaG2;
   }
+  void setHTensorDataIn(
+      core::TensorDataInput<float, 3> h_imageIO) {
+    mh_imageIn = h_imageIO;
+  }
+  void setHTensorDataIn(
+      float *in_hptr, core::Grids<3> grid) {
+    mh_imageIn.ptr = in_hptr;
+    mh_imageIn.grid = grid;
+  }
+  void setDTensorDataIn(
+      core::TensorDataInput<float, 3> d_imageIn) {
+    md_imageIn = d_imageIn;
+  }
+  void setDTensorDataIn(
+      float *in_dptr, core::Grids<3> grid) {
+    md_imageIn.ptr = in_dptr;
+    md_imageIn.grid = grid;
+  }
 
 public:
   void convH(
       core::TensorDataIO<float, 3> __image) {
-    generateHKNNKernel(__image);
+    generateHKNNKernel();
+    checkOrThrowHGenerated(__image);
     PNI_DEBUG("Doing KNN Conv\n");
     if (__image.ptr_in != __image.ptr_out)
       impl::h_knn_conv(mh_knnValue.get(), mh_knnTo.get(), m_knnNumbers, __image.input_branch().ptr,
@@ -50,8 +71,8 @@ public:
   }
   void deconvH(
       core::TensorDataIO<float, 3> __image) {
-    if (!checkHGenerated(__image))
-      generateHKNNKernel(__image);
+    generateHKNNKernel();
+    checkOrThrowHGenerated(__image);
     PNI_DEBUG("Doing KNN Deconv\n");
     if (__image.ptr_in != __image.ptr_out)
       impl::h_knn_deconv(mh_knnValue.get(), mh_knnTo.get(), m_knnNumbers, __image.input_branch().ptr,
@@ -69,7 +90,8 @@ public:
   }
   void convD(
       core::TensorDataIO<float, 3> __image) {
-    generateDKNNKernel(__image);
+    generateDKNNKernel();
+    checkOrThrowDGenerated(__image);
     PNI_DEBUG("Doing KNN Conv\n");
     if (__image.ptr_in != __image.ptr_out)
       impl::d_knn_conv(md_knnValue.get(), md_knnTo.get(), m_knnNumbers, __image.input_branch().ptr,
@@ -84,8 +106,8 @@ public:
   }
   void deconvD(
       core::TensorDataIO<float, 3> __image) {
-    if (!checkDGenerated(__image))
-      generateDKNNKernel(__image);
+    generateDKNNKernel();
+    checkOrThrowDGenerated(__image);
     PNI_DEBUG("Doing KNN Deconv\n");
     if (__image.ptr_in != __image.ptr_out)
       impl::d_knn_deconv(md_knnValue.get(), md_knnTo.get(), m_knnNumbers, __image.input_branch().ptr,
@@ -100,71 +122,84 @@ public:
   }
 
 private:
-  bool checkHGenerated(
+  void checkOrThrowHGenerated(
       core::TensorDataIO<float, 3> __image) {
+    if (!m_HKNNKernelGenerated)
+      throw exceptions::algorithm_unexpected_condition("No h_KNN kernel generated.");
+
     auto pixelNum = __image.input_branch().grid.totalSize();
 
     auto paddedImageSpan = core::MDSpan<3>::create(__image.input_branch().grid.size.dimSize + m_featureSizeHalf * 2);
-    if (mh_tempPaddedImageSize != paddedImageSpan.totalSize())
-      return false;
+    if (mh_tempPaddedImageSize != paddedImageSpan.totalSize()) {
+#if PNI_STANDARD_CONFIG_ENABLE_CMDLINE_ERROR_MESSAGES
+      debug::say_critical_message(std::format("KNNConv3D Error: Expected padded size: {}, but got {}.\n",
+                                              mh_tempPaddedImageSize, paddedImageSpan.totalSize()));
+#endif
+      throw exceptions::algorithm_unexpected_condition("paddedImageSize doesn't match.");
+    }
 
     auto featureSpan = core::MDBeginEndSpan<3>::create(-m_featureSizeHalf, m_featureSizeHalf + 1);
     if (mh_tempFeatureMatrixSize != pixelNum * featureSpan.totalSize())
-      return false;
+      throw exceptions::algorithm_unexpected_condition("Feature matrixSize doesn't match.");
 
     if (mh_knnKernelSize != pixelNum * m_knnNumbers)
-      return false;
-
-    return true;
+      throw exceptions::algorithm_unexpected_condition("KNN kernelSize doesn't match.");
   }
-  bool checkDGenerated(
+  void checkOrThrowDGenerated(
       core::TensorDataIO<float, 3> __image) {
-    auto pixelNum = __image.input_branch().grid.totalSize();
+    if (!m_DKNNKernelGenerated)
+      throw exceptions::algorithm_unexpected_condition("No d_KNN kernel generated.");
 
+    auto pixelNum = __image.input_branch().grid.totalSize();
     auto paddedImageSpan = core::MDSpan<3>::create(__image.input_branch().grid.size.dimSize + m_featureSizeHalf * 2);
-    if (md_tempPaddedImageSize != paddedImageSpan.totalSize())
-      return false;
+    if (md_tempPaddedImageSize != paddedImageSpan.totalSize()) {
+#if PNI_STANDARD_CONFIG_ENABLE_CMDLINE_ERROR_MESSAGES
+      debug::say_critical_message(std::format("KNNConv3D Error: Expected padded size: {}, but got {}.\n",
+                                              md_tempPaddedImageSize, paddedImageSpan.totalSize()));
+#endif
+      throw exceptions::algorithm_unexpected_condition("paddedImageSize doesn't match.");
+    }
 
     auto featureSpan = core::MDBeginEndSpan<3>::create(-m_featureSizeHalf, m_featureSizeHalf + 1);
     if (md_tempFeatureMatrixSize != pixelNum * featureSpan.totalSize())
-      return false;
+      throw exceptions::algorithm_unexpected_condition("Feature matrixSize doesn't match.");
 
     if (md_knnKernelSize != pixelNum * m_knnNumbers)
-      return false;
-
-    return true;
+      throw exceptions::algorithm_unexpected_condition("KNN kernelSize doesn't match.");
   }
 
 private:
-  void generateHKNNKernel(
-      core::TensorDataIO<float, 3> __image) {
+  void generateHKNNKernel() {
+    if (m_HKNNKernelGenerated)
+      return;
     PNI_DEBUG("Generate KNN Kernel\n");
     // 第一步：增广
-    auto featureSizeHalf = core::Vector<int64_t, 3>{1, 1, 1};
-    auto featureSpan = core::MDBeginEndSpan<3>::create(-featureSizeHalf, featureSizeHalf + 1);
+    auto featureSpan = core::MDBeginEndSpan<3>::create(-m_featureSizeHalf, m_featureSizeHalf + 1);
     auto imageInPaddedSpan =
-        core::MDBeginEndSpan<3>::create(featureSizeHalf, featureSizeHalf + __image.input_branch().grid.size.dimSize);
-    auto inSpan = __image.input_branch().grid.index_span();
-    auto paddedImageSpan = core::MDSpan<3>::create(inSpan.dimSize + featureSizeHalf * 2);
+        core::MDBeginEndSpan<3>::create(m_featureSizeHalf, m_featureSizeHalf + mh_imageIn.grid.size.dimSize);
+    auto inSpan = mh_imageIn.grid.index_span();
+    auto paddedImageSpan = core::MDSpan<3>::create(inSpan.dimSize + m_featureSizeHalf * 2);
+    std::unique_ptr<float[]> tempPaddedImage;
+    std::unique_ptr<float[]> tempFeatureMatrix;
     if (mh_tempPaddedImageSize != paddedImageSpan.totalSize()) {
-      mh_tempPaddedImage = std::make_unique_for_overwrite<float[]>(paddedImageSpan.totalSize());
+      tempPaddedImage = std::make_unique_for_overwrite<float[]>(paddedImageSpan.totalSize());
       mh_tempPaddedImageSize = paddedImageSpan.totalSize();
     }
-    impl::h_image_augmentation(__image.input_branch().ptr, inSpan, mh_tempPaddedImage.get(), featureSizeHalf);
+    impl::h_image_augmentation(mh_imageIn.ptr, inSpan, tempPaddedImage.get(), m_featureSizeHalf);
 
     // 第二步：计算特征矩阵
     PNI_DEBUG("  Fill Feature Matrix\n");
     if (mh_tempFeatureMatrixSize != inSpan.totalSize() * featureSpan.totalSize()) {
-      mh_tempFeatureMatrix = std::make_unique_for_overwrite<float[]>(inSpan.totalSize() * featureSpan.totalSize());
+      tempFeatureMatrix = std::make_unique_for_overwrite<float[]>(inSpan.totalSize() * featureSpan.totalSize());
       mh_tempFeatureMatrixSize = inSpan.totalSize() * featureSpan.totalSize();
     }
-    impl::h_fill_feature_matrix(mh_tempPaddedImage.get(), mh_tempFeatureMatrix.get(), featureSpan, imageInPaddedSpan,
+    impl::h_fill_feature_matrix(tempPaddedImage.get(), tempFeatureMatrix.get(), featureSpan, imageInPaddedSpan,
                                 paddedImageSpan);
 
     // 第三步：归一化
     PNI_DEBUG("  Feature Matrix Normalize\n");
     auto featureMatrixSpan = core::MDSpan<6>::create(inSpan.dimSize.left_expand(featureSpan.size()));
-    impl::h_feature_matrix_normalize(mh_tempFeatureMatrix.get(), featureMatrixSpan);
+    impl::h_feature_matrix_normalize(tempFeatureMatrix.get(), featureMatrixSpan);
 
     // 第四步：计算KNN并生成卷积核
     PNI_DEBUG("  Fill KNN Indices\n");
@@ -174,69 +209,74 @@ private:
       mh_knnKernelSize = inSpan.totalSize() * m_knnNumbers;
     }
     auto kNNSearchSpan = core::MDBeginEndSpan<3>::create(-m_knnSearchSizeHalf, m_knnSearchSizeHalf + 1);
-    impl::h_fill_KNN_indices(mh_tempFeatureMatrix.get(), featureMatrixSpan, kNNSearchSpan, m_knnNumbers,
-                             mh_knnValue.get(), mh_knnTo.get(), m_sigmaG2);
+    impl::h_fill_KNN_indices(tempFeatureMatrix.get(), featureMatrixSpan, kNNSearchSpan, m_knnNumbers, mh_knnValue.get(),
+                             mh_knnTo.get(), m_sigmaG2);
+    m_HKNNKernelGenerated = true;
   }
-  void generateDKNNKernel(
-      core::TensorDataIO<float, 3> __image) {
+  void generateDKNNKernel() {
+    if (m_DKNNKernelGenerated)
+      return;
     PNI_DEBUG("Generate KNN Kernel\n");
     // 第一步：增广
-    auto featureSizeHalf = core::Vector<int64_t, 3>{1, 1, 1};
-    auto featureSpan = core::MDBeginEndSpan<3>::create(-featureSizeHalf, featureSizeHalf + 1);
+    auto featureSpan = core::MDBeginEndSpan<3>::create(-m_featureSizeHalf, m_featureSizeHalf + 1);
     auto imageInPaddedSpan =
-        core::MDBeginEndSpan<3>::create(featureSizeHalf, featureSizeHalf + __image.input_branch().grid.size.dimSize);
-    auto inSpan = __image.input_branch().grid.index_span();
-    auto paddedImageSpan = core::MDSpan<3>::create(inSpan.dimSize + featureSizeHalf * 2);
+        core::MDBeginEndSpan<3>::create(m_featureSizeHalf, m_featureSizeHalf + md_imageIn.grid.size.dimSize);
+    auto inSpan = md_imageIn.grid.index_span();
+    auto paddedImageSpan = core::MDSpan<3>::create(inSpan.dimSize + m_featureSizeHalf * 2);
+    cuda_sync_ptr<float> tempPaddedImage{"KNN_TempPaddedImage"};
+    cuda_sync_ptr<float> tempFeatureMatrix{"KNN_TempFeatureMatrix"};
     if (md_tempPaddedImageSize != paddedImageSpan.totalSize()) {
-      md_tempPaddedImage = make_cuda_sync_ptr<float>(paddedImageSpan.totalSize());
+      tempPaddedImage.reserve(paddedImageSpan.totalSize());
       md_tempPaddedImageSize = paddedImageSpan.totalSize();
     }
-    impl::d_image_augmentation(__image.input_branch().ptr, inSpan, md_tempPaddedImage.get(), featureSizeHalf);
+    impl::d_image_augmentation(md_imageIn.ptr, inSpan, tempPaddedImage.get(), m_featureSizeHalf);
 
     // 第二步：计算特征矩阵
     PNI_DEBUG("  Fill Feature Matrix\n");
     if (md_tempFeatureMatrixSize != inSpan.totalSize() * featureSpan.totalSize()) {
-      md_tempFeatureMatrix = make_cuda_sync_ptr<float>(inSpan.totalSize() * featureSpan.totalSize());
+      tempFeatureMatrix.reserve(inSpan.totalSize() * featureSpan.totalSize());
       md_tempFeatureMatrixSize = inSpan.totalSize() * featureSpan.totalSize();
     }
-    impl::d_fill_feature_matrix(md_tempPaddedImage.get(), md_tempFeatureMatrix.get(), featureSpan, imageInPaddedSpan,
+    impl::d_fill_feature_matrix(tempPaddedImage.get(), tempFeatureMatrix.get(), featureSpan, imageInPaddedSpan,
                                 paddedImageSpan);
 
     // 第三步：归一化
     PNI_DEBUG("  Feature Matrix Normalize\n");
     auto featureMatrixSpan = core::MDSpan<6>::create(inSpan.dimSize.left_expand(featureSpan.size()));
-    impl::d_feature_matrix_normalize(md_tempFeatureMatrix.get(), featureMatrixSpan);
+    impl::d_feature_matrix_normalize(tempFeatureMatrix.get(), featureMatrixSpan);
 
     // 第四步：计算KNN并生成卷积核
     PNI_DEBUG("  Fill KNN Indices\n");
     if (md_knnKernelSize != inSpan.totalSize() * m_knnNumbers) {
-      md_knnValue = make_cuda_sync_ptr<float>(inSpan.totalSize() * m_knnNumbers);
-      md_knnTo = make_cuda_sync_ptr<std::size_t>(inSpan.totalSize() * m_knnNumbers);
+      md_knnValue.reserve(inSpan.totalSize() * m_knnNumbers);
+      md_knnTo.reserve(inSpan.totalSize() * m_knnNumbers);
       md_knnKernelSize = inSpan.totalSize() * m_knnNumbers;
     }
     auto kNNSearchSpan = core::MDBeginEndSpan<3>::create(-m_knnSearchSizeHalf, m_knnSearchSizeHalf + 1);
-    impl::d_fill_KNN_indices(md_tempFeatureMatrix.get(), featureMatrixSpan, kNNSearchSpan, m_knnNumbers,
-                             md_knnValue.get(), md_knnTo.get(), m_sigmaG2);
+    impl::d_fill_KNN_indices(tempFeatureMatrix.get(), featureMatrixSpan, kNNSearchSpan, m_knnNumbers, md_knnValue.get(),
+                             md_knnTo.get(), m_sigmaG2);
+    m_DKNNKernelGenerated = true;
   }
 
 private:
+  core::TensorDataInput<float, 3> mh_imageIn;
+  core::TensorDataInput<float, 3> md_imageIn;
+  bool m_HKNNKernelGenerated = false;
+  bool m_DKNNKernelGenerated = false;
+
   std::unique_ptr<float[]> mh_knnValue;
   std::unique_ptr<std::size_t[]> mh_knnTo;
   std::size_t mh_knnKernelSize = 0;
-  std::unique_ptr<float[]> mh_tempPaddedImage;
   std::size_t mh_tempPaddedImageSize = 0;
-  std::unique_ptr<float[]> mh_tempFeatureMatrix;
   std::size_t mh_tempFeatureMatrixSize = 0;
 
   std::unique_ptr<float[]> mh_tempImage;
   std::size_t m_tempImageSize = 0;
 
-  cuda_sync_ptr<float> md_knnValue;
-  cuda_sync_ptr<std::size_t> md_knnTo;
+  cuda_sync_ptr<float> md_knnValue{"KNN_KernelValue"};
+  cuda_sync_ptr<std::size_t> md_knnTo{"KNN_KernelTo"};
   std::size_t md_knnKernelSize = 0;
-  cuda_sync_ptr<float> md_tempPaddedImage;
   std::size_t md_tempPaddedImageSize = 0;
-  cuda_sync_ptr<float> md_tempFeatureMatrix;
   std::size_t md_tempFeatureMatrixSize = 0;
 
   cuda_sync_ptr<float> md_tempImage;
@@ -265,6 +305,22 @@ void KNNConv3D::setKNNSearchSizeHalf(
 void KNNConv3D::setKNNSigmaG2(
     float sigmaG2) {
   m_impl->setKNNSigmaG2(sigmaG2);
+}
+void KNNConv3D::setHTensorDataIn(
+    core::TensorDataInput<float, 3> h_imageIO) {
+  m_impl->setHTensorDataIn(h_imageIO);
+}
+void KNNConv3D::setHTensorDataIn(
+    float *in_hptr, core::Grids<3> grid) {
+  m_impl->setHTensorDataIn(in_hptr, grid);
+}
+void KNNConv3D::setDTensorDataIn(
+    core::TensorDataInput<float, 3> d_imageIn) {
+  m_impl->setDTensorDataIn(d_imageIn);
+}
+void KNNConv3D::setDTensorDataIn(
+    float *in_dptr, core::Grids<3> grid) {
+  m_impl->setDTensorDataIn(in_dptr, grid);
 }
 void KNNConv3D::convH(
     core::TensorDataIO<float, 3> __image) {

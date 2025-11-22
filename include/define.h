@@ -1,48 +1,33 @@
 #pragma once
 
+#include <Pni-Config.hpp>
+#include <experimental/core/Image.hpp>
 #include <experimental/core/Mich.hpp>
+#include <experimental/node/MichAttn.hpp>
+#include <experimental/node/MichCrystal.hpp>
+#include <experimental/node/MichNorm.hpp>
+#include <experimental/node/MichRandom.hpp>
+#include <experimental/node/MichScatter.hpp>
+
+using Vector3f = openpni::experimental::core::Vector<float, 3>;
+using Vector3d = openpni::experimental::core::Vector<double, 3>;
+using MichDefine = openpni::experimental::core::MichDefine;
+using RangeGenerator = openpni::experimental::core::RangeGenerator;
+using MichCrystal = openpni::experimental::node::MichCrystal;
+using RectangleID = openpni::experimental::core::RectangleID;
+using MichInfoHub = openpni::experimental::core::MichInfoHub;
+using MichAttn = openpni::experimental::node::MichAttn;
+using MichNorm = openpni::experimental::node::MichNormalization;
+using MichRandom = openpni::experimental::node::MichRandom;
+using MichScatter = openpni::experimental::node::MichScatter;
+template<typename T>
+using Vector3 = openpni::experimental::core::Vector<T, 3>;
+template<size_t D>
+using Grids = openpni::experimental::core::Grids<D>;
+template<typename T>
+using RectangleGeom = openpni::experimental::core::RectangleGeom<T>;
 
 
-inline openpni::experimental::core::MichDefine E180() {
-  openpni::experimental::core::MichDefine mich;
-  auto &polygon = mich.polygon;
-  polygon.edges = 24;
-  polygon.detectorPerEdge = 1;
-  polygon.detectorLen = 0;
-  polygon.radius = 106.5;
-  polygon.angleOf1stPerp = 0;
-  polygon.detectorRings = 2;
-  polygon.ringDistance = 26.5 * 4 + 2;
-  auto &detector = mich.detector;
-  detector.blockNumU = 4;
-  detector.blockNumV = 1;
-  detector.blockSizeU = 26.5;
-  detector.blockSizeV = 26.5;
-  detector.crystalNumU = 13;
-  detector.crystalNumV = 13;
-  detector.crystalSizeU = 2.0;
-  detector.crystalSizeV = 2.0;
-  return mich;
-}
+MichDefine E180();
 
-inline openpni::experimental::core::MichDefine D80() {
-  openpni::experimental::core::MichDefine mich;
-  auto &polygon = mich.polygon;
-  polygon.edges = 12;
-  polygon.detectorPerEdge = 1;
-  polygon.detectorLen = 0;
-  polygon.radius = 52.9;
-  polygon.angleOf1stPerp = 0;
-  polygon.detectorRings = 1;
-  polygon.ringDistance = 26.5 * 4 + 2;
-  auto &detector = mich.detector;
-  detector.blockNumU = 4;
-  detector.blockNumV = 1;
-  detector.blockSizeU = 26.5;
-  detector.blockSizeV = 26.5;
-  detector.crystalNumU = 13;
-  detector.crystalNumV = 13;
-  detector.crystalSizeU = 2.0;
-  detector.crystalSizeV = 2.0;
-  return mich;
-}
+MichDefine D80();

@@ -3,8 +3,8 @@
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 
+#include "../../basic/CudaPtr.hpp"
 #include "../core/Span.hpp"
-#include "include/basic/CudaPtr.hpp"
 namespace openpni::experimental::tools {
 
 template <typename Func>

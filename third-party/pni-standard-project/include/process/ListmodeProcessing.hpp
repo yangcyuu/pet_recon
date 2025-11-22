@@ -27,7 +27,13 @@ struct CoincidenceProtocol {
   float energyUpper_eV{650'000};
 };
 
+struct CoincidenceCount{
+  uint64_t promptCount;
+  uint64_t delayCount;
+};
+
 // Single 2 Coin with count map addition
 CoincidenceResult stoc(const LocalSinglesOfEachChannel &d_localSingles, device::DetectorBase *const *h_detectors,
                        CoincidenceProtocol protocol);
+
 } // namespace openpni::process

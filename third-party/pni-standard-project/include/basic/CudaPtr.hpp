@@ -288,8 +288,10 @@ public: // Common interface
   }
   auto cspan(
       std::size_t __begin, std::size_t __end) const {
-    if (__begin >= __end || __end > m_elements)
-      throw exceptions::algorithm_unexpected_condition("cuda_unique_ptr: subspan out of range");
+    if (__begin > __end || __end > m_elements)
+      throw exceptions::algorithm_unexpected_condition(std::string("cuda_unique_ptr: subspan out of range, expected ") +
+                                                       std::to_string(__begin) + " ~ " + std::to_string(__end) +
+                                                       ", max " + std::to_string(__end));
     return std::span<const T>(m_d_ptr + __begin, __end - __begin);
   }
   auto span(
@@ -311,6 +313,15 @@ public: // Common interface
   }
 
   std::string getName() const { return m_name; }
+
+  T at(
+      std::size_t __index) const {
+    if (__index >= m_elements)
+      throw exceptions::algorithm_unexpected_condition("cuda_unique_ptr: index out of range");
+    T result;
+    m_allocator.copy_from_device_to_host(&result, std::span<const T>(m_d_ptr + __index, 1));
+    return result;
+  }
 };
 
 } // namespace openpni::basic::cuda_ptr

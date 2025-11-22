@@ -3,12 +3,15 @@
 #include <fstream>
 
 #include "impl/Share.hpp"
-#include "impl/Test.h"
 #include "impl/WrappedConv3D.h"
+#include "include/basic/Matrix.hpp"
+#include "include/detector/BDM2.hpp"
 #include "include/experimental/algorithms/CalGeometry.hpp"
 #include "include/experimental/algorithms/PathIntegral.hpp"
 #include "include/experimental/example/EasyParallel.hpp"
 #include "include/experimental/node/GaussConv3D.hpp"
+#include "include/experimental/node/KGConv3D.hpp"
+#include "include/experimental/node/KNNConv3D.hpp"
 #include "include/experimental/node/LORBatch.hpp"
 #include "include/experimental/node/MichCrystal.hpp"
 #include "include/experimental/node/Senmaps.hpp"
@@ -17,7 +20,11 @@
 #include "include/io/IO.hpp"
 #include "include/misc/CycledBuffer.hpp"
 #include "include/misc/ListmodeBuffer.hpp"
+#include "include/process/FBP.hpp"
+#include "include/process/FDK.hpp"
+#include "src/common/Debug.h"
 #include "src/experimental/impl/Projection.h"
+
 #ifndef MichInfoHub
 #define MichInfoHub(m) core::MichInfoHub::create(m)
 #endif
@@ -174,18 +181,6 @@ void osem_impl_CUDA(
   auto &senmap = *context.senmap;
   auto &d_michValue = context.d_michValue;
 
-  {
-    // if (michAttn) {
-    //   auto ptr = michAttn->dumpAttnMich();
-    //   std::ofstream attnFile("AttnMich_dump.bin", std::ios::binary);
-    //   if (attnFile.is_open()) {
-    //     attnFile.write(reinterpret_cast<const char *>(ptr.get()), MichInfoHub(mich).getLORNum() * sizeof(float));
-    //     attnFile.close();
-    //     std::cout << "Attn Mich dumped to AttnMich_dump.bin" << std::endl;
-    //   }
-    // }
-  }
-
   for (const auto iteration : std::views::iota(0, params.iterNum))
     for (const auto subsetId : std::views::iota(0, params.subsetNum)) {
       PNI_DEBUG(std::format("OSEM iteration {}, subset {}\n", iteration, subsetId));
@@ -204,7 +199,7 @@ void osem_impl_CUDA(
         node::impl::d_apply_correction_factor(d_tempValues, d_tempEvents.span(lors.size()), michNorm, michRand,
                                               michScat, michAttn, d_factors_add, d_factors_mul);
         node::impl::d_osem_fix_integral_value(d_tempValues.span(lors.size()));
-        d_parralel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), lors.size());
+        d_parallel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), lors.size());
         node::impl::d_fill_standard_events_values(d_tempEvents.get(), d_tempValues.get(), lors.size());
         node::impl::d_simple_path_reverse_integral_batch(core::Image3DOutput<float>{d_out_OSEMImg.grid, d_tmp2.get()},
                                                          d_tempEvents.cspan(lors.size()), params.sample_rate);
@@ -255,21 +250,25 @@ void osem_impl_listmodeTOF_CUDA(
         d_tempMichValue.reserve(currentBatchSize);
         d_tempEvents.reserve(currentBatchSize);
 
-        d_parralel_fill(d_tempMichValue.get(), 1.0f, currentBatchSize);
+        d_parallel_fill(d_tempMichValue.get(), 1.0f, currentBatchSize);
         node::impl::d_fill_standard_events_ids_from_listmodeTOF(
             d_tempEvents, context.Listmode_data.cspan().subspan(batchStart, currentBatchSize), params.TOF_division,
             mich);
         michCrystal.fillDCrystalsBatch(d_tempEvents.span());
         node::impl::d_simple_path_integral_batch_TOF(core::Image3DInput<float>{d_out_OSEMImg.grid, d_tmp1.get()},
-                                                     d_tempEvents.cspan(), params.sample_rate, d_tempValues.get());
+                                                     d_tempEvents.cspan(), params.sample_rate, params.TOFBinWid_ps,
+                                                     d_tempValues.get());
+        // lgxtest
+        // michRand->setRandomRatio(0.1);
+        // PNI_DEBUG(std::format("RandomRatio: {}\n", michRand->getRandomRatio()));
         node::impl::d_apply_correction_factor(d_tempValues, d_tempEvents.span(currentBatchSize), michNorm, michRand,
                                               michScat, michAttn, d_factors_add, d_factors_mul);
         node::impl::d_osem_fix_integral_value(d_tempValues.span(currentBatchSize));
-        d_parralel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), currentBatchSize);
+        d_parallel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), currentBatchSize);
         node::impl::d_fill_standard_events_values(d_tempEvents.get(), d_tempValues.get(), currentBatchSize);
         node::impl::d_simple_path_reverse_integral_batch_TOF(
             core::Image3DOutput<float>{d_out_OSEMImg.grid, d_tmp2.get()}, d_tempEvents.cspan(currentBatchSize),
-            params.sample_rate);
+            params.sample_rate, params.TOFBinWid_ps);
       }
 
       convolver.deconvD(core::Image3DIO<float>{d_out_OSEMImg.grid, d_tmp2.get(), d_tmp2.get()});
@@ -278,6 +277,49 @@ void osem_impl_listmodeTOF_CUDA(
 all_end:
 }
 
+void backwardproj_impl_listmode_CUDA(
+    core::Image3DOutput<float> d_out_OSEMImg, OSEM_TOF_params params, core::MichDefine const &mich,
+    OSEM_context_listmode &context) {
+  // Direct back-projection without forward projection (simple listmode back-projection)
+  openpni::cuda_sync_ptr<float> d_tempValues{"BackProj_tempValues"};
+  cuda_sync_ptr<float> d_tmp1 = openpni::make_cuda_sync_ptr<float>(d_out_OSEMImg.grid.totalSize(), "BackProj_tmp1");
+  cuda_sync_ptr<core::MichStandardEvent> d_tempEvents{"BackProj_tempEvents"};
+
+  auto &michCrystal = *context.michCrystal;
+  auto &convolver = *context.convolver;
+
+  const std::size_t batchSize = context.batchSize;
+
+  d_tmp1.memset(0);
+
+  // Process all events in batches for back-projection
+  for (std::size_t batchStart = 0; batchStart < context.events_count; batchStart += batchSize) {
+    const std::size_t batchEnd = std::min(batchStart + batchSize, context.events_count);
+    const std::size_t currentBatchSize = batchEnd - batchStart;
+
+    // Reserve memory for this batch
+    d_tempValues.reserve(currentBatchSize);
+    d_tempEvents.reserve(currentBatchSize);
+
+    node::impl::d_fill_standard_events_ids_from_listmode(
+        d_tempEvents, context.Listmode_data.cspan().subspan(batchStart, currentBatchSize), mich);
+
+    michCrystal.fillDCrystalsBatch(d_tempEvents.span());
+
+    // Set event values to 1.0 for simple back-projection (no normalization/correction applied)
+    d_parallel_fill(d_tempValues.get(), 1.0f, currentBatchSize);
+    node::impl::d_fill_standard_events_values(d_tempEvents.get(), d_tempValues.get(), currentBatchSize);
+
+    // Direct back-projection: project values back to image space
+    node::impl::d_simple_path_reverse_integral_batch(core::Image3DOutput<float>{d_out_OSEMImg.grid, d_tmp1.get()},
+                                                     d_tempEvents.cspan(currentBatchSize), params.sample_rate);
+  }
+
+  // Apply convolution (deconvolution) to the accumulated back-projection result
+  convolver.deconvD(core::Image3DIO<float>{d_out_OSEMImg.grid, d_tmp1.get(), d_out_OSEMImg.ptr});
+
+  PNI_DEBUG("Direct back-projection complete.\n");
+}
 void osem_impl_listmode_CUDA(
     core::Image3DOutput<float> d_out_OSEMImg, OSEM_TOF_params params, node::MichNormalization *michNorm,
     node::MichRandom *michRand, node::MichScatter *michScat, node::MichAttn *michAttn, core::MichDefine const &mich,
@@ -297,6 +339,17 @@ void osem_impl_listmode_CUDA(
   auto &michCrystal = *context.michCrystal;
   auto &senmap = *context.senmap;
   auto &convolver = *context.convolver;
+
+  // test dump senmap
+  auto senResult = senmap.dumpHSenmap(0, d_out_OSEMImg.grid);
+  {
+    std::ofstream senFile("/home/ustc/Desktop/testBi_dynamicCase/Data/result/Senmap_dump.bin", std::ios::binary);
+    if (senFile.is_open()) {
+      senFile.write(reinterpret_cast<const char *>(senResult.get()), d_out_OSEMImg.grid.totalSize() * sizeof(float));
+      senFile.close();
+      std::cout << "Senmap dumped to Data/result/Senmap_dump.bin" << std::endl;
+    }
+  }
 
   for (const auto iteration : std::views::iota(0, params.iterNum))
     for (const auto subsetId : std::views::iota(0, params.subsetNum)) {
@@ -318,7 +371,7 @@ void osem_impl_listmode_CUDA(
         d_tempMichValue.reserve(currentBatchSize);
         d_tempEvents.reserve(currentBatchSize);
 
-        d_parralel_fill(d_tempMichValue.get(), 1.0f, currentBatchSize);
+        d_parallel_fill(d_tempMichValue.get(), 1.0f, currentBatchSize);
 
         node::impl::d_fill_standard_events_ids_from_listmode(
             d_tempEvents, context.Listmode_data.cspan().subspan(batchStart, currentBatchSize), mich);
@@ -330,7 +383,7 @@ void osem_impl_listmode_CUDA(
         node::impl::d_apply_correction_factor(d_tempValues, d_tempEvents.span(currentBatchSize), michNorm, michRand,
                                               michScat, michAttn, d_factors_add, d_factors_mul);
         node::impl::d_osem_fix_integral_value(d_tempValues.span(currentBatchSize));
-        d_parralel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), currentBatchSize);
+        d_parallel_mul(d_tempValues.get(), d_tempMichValue.get(), d_tempValues.get(), currentBatchSize);
         node::impl::d_fill_standard_events_values(d_tempEvents.get(), d_tempValues.get(), currentBatchSize);
         node::impl::d_simple_path_reverse_integral_batch(core::Image3DOutput<float>{d_out_OSEMImg.grid, d_tmp2.get()},
                                                          d_tempEvents.cspan(currentBatchSize), params.sample_rate);
@@ -368,7 +421,7 @@ void instant_OSEM_mich_CUDA(
     michScat->bindDPromptMich(context.d_michValue);
 
   for (auto scatterIter = 0; scatterIter <= params.scatterSimulations; scatterIter++) {
-    d_parralel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
+    d_parallel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
     osem_impl_CUDA(core::Image3DOutput<float>{grid, d_out_OSEMImg}, params, conv3D, michNorm, michRand, michScat,
                    michAttn, mich, context);
     if (michScat)
@@ -416,33 +469,85 @@ DelayListmodeReadResult read_delay_listmode(
     std::vector<std::string> const &randomListmodeFiles, uint32_t listmodeFileTimeBegin_ms,
     uint32_t listmodeFileTimeEnd_ms, int minSector, int radialModeulNumS, core::MichDefine const &mich) {
   DelayListmodeReadResult result;
-  for (const auto &randomListmodeFile : randomListmodeFiles)
-    if (randomListmodeFile.size()) {
+  for (const auto &randomListmodeFile : randomListmodeFiles) {
+    if (!randomListmodeFile.size())
+      continue;
+
+    if (!result.michRand) {
       result.michRand = std::make_unique<node::MichRandom>(mich);
       result.michRand->setMinSectorDifference(minSector);
       result.michRand->setRadialModuleNumS(radialModeulNumS);
-      openpni::io::ListmodeFileInput delayListmodeFile;
-      delayListmodeFile.open(randomListmodeFile);
-      auto selectedDelayListmodeSegments =
-          openpni::io::selectSegments(delayListmodeFile, listmodeFileTimeBegin_ms, listmodeFileTimeEnd_ms);
-      auto totalDelayEvents =
-          std::accumulate(selectedDelayListmodeSegments.begin(), selectedDelayListmodeSegments.end(), 0ull,
-                          [](auto a, auto b) { return a + b.dataIndexEnd - b.dataIndexBegin; });
-      PNI_DEBUG("Delay Listmode file opened, reading segments...\n");
-
-      openpni::misc::ListmodeBuffer delayListmodeBuffer;
-      delayListmodeBuffer
-          .setBufferSize(1024 * 1024 * 1000) // 1000M
-          .callWhenFlush([&](const openpni::basic::Listmode_t *__data, std::size_t __count) {
-            PNI_DEBUG(std::format("Processing {} delay listmode events...\n", __count));
-            result.michRand->addDelayListmodes(std::span<const openpni::basic::Listmode_t>(__data, __count));
-          })
-          .append(delayListmodeFile, selectedDelayListmodeSegments)
-          .flush();
-
-      result.eventCount = totalDelayEvents;
+      result.michRand->addDelayListmodes({});
     }
+    openpni::io::ListmodeFileInput delayListmodeFile;
+    delayListmodeFile.open(randomListmodeFile);
+
+    auto selectedDelayListmodeSegments =
+        openpni::io::selectSegments(delayListmodeFile, listmodeFileTimeBegin_ms, listmodeFileTimeEnd_ms);
+    auto totalDelayEvents = std::accumulate(selectedDelayListmodeSegments.begin(), selectedDelayListmodeSegments.end(),
+                                            0ull, [](auto a, auto b) { return a + b.dataIndexEnd - b.dataIndexBegin; });
+    PNI_DEBUG(std::format("Delay Listmode file {} opened, reading segments... Total events: {}, segments: {}\n",
+                          randomListmodeFile, totalDelayEvents, selectedDelayListmodeSegments.size()));
+    openpni::misc::ListmodeBuffer delayListmodeBuffer;
+    delayListmodeBuffer
+        .setBufferSize(1024 * 1024 * 1024) // 1000M
+        .callWhenFlush([&](const openpni::basic::Listmode_t *__data, std::size_t __count) {
+          PNI_DEBUG(std::format("Processing {} delay listmode events...\n", __count));
+          result.michRand->addDelayListmodes(std::span<const openpni::basic::Listmode_t>(__data, __count));
+        })
+        .append(delayListmodeFile, selectedDelayListmodeSegments)
+        .flush();
+
+    result.eventCount = totalDelayEvents;
+  }
   return result;
+}
+void instant_backwardProjection_listmode_CUDA(
+    core::Image3DOutput<float> out_Img, OSEM_TOF_params params, interface::Conv3D &conv3D, std::string listmode_path,
+    core::MichDefine const &mich) {
+  auto [grid, h_outImg] = out_Img;
+  auto d_out_OSEMImg = make_cuda_sync_ptr<float>(grid.totalSize(), "backProj_outImg");
+  // read listmode
+  openpni::io::ListmodeFileInput listmodeFile;
+  listmodeFile.open(listmode_path);
+  auto selectedListmodeSegments =
+      openpni::io::selectSegments(listmodeFile, params.listmodeFileTimeBegin_ms, params.listmodeFileTimeEnd_ms);
+  auto totalEvents = std::accumulate(selectedListmodeSegments.begin(), selectedListmodeSegments.end(), 0ull,
+                                     [](auto a, auto b) { return a + b.dataIndexEnd - b.dataIndexBegin; });
+  PNI_DEBUG(std::format("Listmode file opened, reading segments... Total events: {}\n", totalEvents));
+
+  OSEM_context_listmode context;
+  context.michCrystal = std::make_unique<node::MichCrystal>(mich);
+  context.convolver = &conv3D;
+
+  // Prepare listmode buffer for chunked reading
+  openpni::misc::ListmodeBuffer listmodeBuffer;
+
+  auto GBSize = [](unsigned long long size) -> uint64_t { return size * 1024 * 1024 * 1024; };
+
+  PNI_DEBUG(std::format("Setting up listmode buffer with {} GB...\n", params.size_GB));
+
+  listmodeBuffer.setBufferSize(GBSize(params.size_GB) / sizeof(openpni::basic::Listmode_t))
+      .callWhenFlush([&](const openpni::basic::Listmode_t *__data, std::size_t __count) {
+        PNI_DEBUG(std::format("Total events: {}, processing {} events in this chunk.\n", totalEvents, __count));
+        context.events_count = __count;
+
+        // Copy listmode data to device
+        if (context.Listmode_data.elements() < __count)
+          context.Listmode_data = openpni::make_cuda_sync_ptr<openpni::basic::Listmode_t>(__count, "ListmodeBuffer");
+
+        context.Listmode_data.allocator().copy_from_host_to_device(
+            context.Listmode_data.get(), std::span<const openpni::basic::Listmode_t>(__data, __count));
+
+        backwardproj_impl_listmode_CUDA(core::Image3DOutput<float>{grid, d_out_OSEMImg}, params, mich, context);
+        PNI_DEBUG("Chunk processing complete.\n");
+      })
+      .append(listmodeFile,
+              openpni::io::selectSegments(listmodeFile, params.listmodeFileTimeBegin_ms, params.listmodeFileTimeEnd_ms))
+      .flush();
+
+  d_out_OSEMImg.allocator().copy_from_device_to_host(h_outImg, d_out_OSEMImg.cspan());
+  PNI_DEBUG("listmode backward projection complete.\n");
 }
 
 void instant_OSEM_listmode_CUDA(
@@ -500,9 +605,9 @@ void instant_OSEM_listmode_CUDA(
         if (michScat)
           michScat->bindDListmode(context.Listmode_data.cspan(__count));
         if (michRand)
-          michRand->setRandomRatio(double(__count) / double(totalEvents));
+          michRand->setCountRatio(double(__count) / double(totalEvents));
         for (auto scatterIter = 0; scatterIter <= params.scatterSimulations; scatterIter++) {
-          d_parralel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
+          d_parallel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
           osem_impl_listmode_CUDA(core::Image3DOutput<float>{grid, d_out_OSEMImg}, params, michNorm, michRand.get(),
                                   michScat, michAttn, mich, context);
           if (michScat && scatterIter < params.scatterSimulations)
@@ -571,11 +676,13 @@ void instant_OSEM_listmodeTOF_CUDA(
 
         if (michScat)
           michScat->bindDListmode(context.Listmode_data.cspan(__count));
-        if (michRand)
-          michRand->setRandomRatio(double(__count) / double(totalEvents));
+        if (michRand) {
+          michRand->setCountRatio(double(__count) / double(totalEvents));
+          michRand->setTimeBinRatio(double(params.TOFBinWid_ps) / double(params.timeWindow_ps));
+        }
 
         for (auto scatterIter = 0; scatterIter <= params.scatterSimulations; scatterIter++) {
-          d_parralel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
+          d_parallel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
           osem_impl_listmodeTOF_CUDA(core::Image3DOutput<float>{grid, d_out_OSEMImg}, params, michNorm, michRand.get(),
                                      michScat, michAttn, mich, context);
           if (michScat && scatterIter < params.scatterSimulations)
@@ -590,6 +697,18 @@ void instant_OSEM_listmodeTOF_CUDA(
 
   d_out_OSEMImg.allocator().copy_from_device_to_host(h_outImg, d_out_OSEMImg.cspan());
   PNI_DEBUG("OSEM listmode reconstruction complete.\n");
+}
+std::vector<int> get_gpu_id(
+    uint16_t bitmap_gpu_usage) {
+  std::vector<int> gpu_ids;
+  int gpuNum = 0;
+  cudaGetDeviceCount(&gpuNum);
+  for (int i = 0; i < std::min(gpuNum, 16); ++i) {
+    if (bitmap_gpu_usage & (1 << i)) {
+      gpu_ids.push_back(i);
+    }
+  }
+  return gpu_ids;
 }
 
 void instant_OSEM_listmodeTOF_MULTI_CUDA(
@@ -640,25 +759,26 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
   struct MultiGPUData {
     std::vector<openpni::basic::Listmode_t> listmodes;
   };
-  int gpuNum = 0;
-  cudaGetDeviceCount(&gpuNum);
+  const auto gpu_ids = get_gpu_id(params.bitmap_gpu_usage);
 
-  PNI_DEBUG(std::format("System GPU num = {}\n", gpuNum));
-  if (gpuNum <= 0)
+  PNI_DEBUG(std::format("System GPU num = {}\n", gpu_ids.size()));
+  if (gpu_ids.empty())
     throw std::runtime_error("No CUDA device found.");
 
-  common::MultiCycledBuffer<MultiGPUData> cycleBuffer(gpuNum);
+  common::MultiCycledBuffer<MultiGPUData> cycleBuffer(gpu_ids.size());
   std::vector<std::thread> threadsGPU;
   std::mutex h_addMutex;
-  for (int i = 0; i < gpuNum; ++i) {
-    threadsGPU.emplace_back([&, i]() {
-      cudaSetDevice(i);
+  for (const auto &gpu_id : gpu_ids) {
+    threadsGPU.emplace_back([&, gpu_id]() {
+      cudaSetDevice(gpu_id);
 
       auto norm = params.doNorm ? std::make_unique<node::MichNormalization>(mich) : nullptr;
       if (norm) {
         norm->recoverFromFile(params.normFactorsFile);
         if (params.doSelfNorm)
           norm->bindSelfNormMich(params.selfNormMich);
+        if (params.doDeadTime)
+          norm->setDeadTimeTable(params.deadTimetable);
       }
 
       auto attn = params.doAttn ? std::make_unique<node::MichAttn>(mich) : nullptr;
@@ -678,26 +798,101 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
         scat->setScatterPointsThreshold(params.scatterPointsThreshold);
         scat->setScatterEnergyWindow(params.scatterEnergyWindow);
         scat->setScatterEffTableEnergy(params.scatterEffTableEnergy);
+        scat->setTOFParams(params.tofSSS_timeBinWidth_ns, params.tofSSS_timeBinStart_ns, params.tofSSS_timeBinEnd_ns,
+                           params.tofSSS_systemTimeRes_ns);
         scat->bindAttnCoff(attn.get());
         scat->bindNorm(norm.get());
         scat->bindRandom(rand.get());
+        scat->setScatterPointGrid(params.scatterPointGrid);
       }
 
-      node::GaussianConv3D conv3D;
-      conv3D.setHWHM(params.gauss_hwhm_mm);
+      // node::GaussianConv3D conv3D;
+      // conv3D.setHWHM(params.gauss_hwhm_mm);
+      //
+      std::unique_ptr<interface::Conv3D> convPtr;
+      //
+      if (std::holds_alternative<GaussianConvParams>(params.convParams)) {
+        auto gaussConv3D = std::make_unique<node::GaussianConv3D>();
+        auto convParams = std::get<GaussianConvParams>(params.convParams);
+        gaussConv3D->setHWHM(convParams.HWHM);
+        convPtr = std::move(gaussConv3D);
+      } else if (std::holds_alternative<KNNConvParams>(params.convParams)) {
+        auto knnConv3D = std::make_unique<node::KNNConv3D>();
+        auto convParams = std::get<KNNConvParams>(params.convParams);
+        knnConv3D->setKNNNumbers(convParams.KNNNumbers);
+        knnConv3D->setFeatureSizeHalf(convParams.FeatureSizeHalf);
+        knnConv3D->setKNNSearchSizeHalf(convParams.SearchSizeHalf);
+        knnConv3D->setKNNSigmaG2(convParams.SigmaG2);
+        convPtr = std::move(knnConv3D);
+      } else if (std::holds_alternative<GKNNConvParams>(params.convParams)) {
+        auto convParams = std::get<GKNNConvParams>(params.convParams);
+        auto d_kemImgData =
+            make_cuda_sync_ptr_from_hcopy(std::span<const float>(convParams.h_kemImgTensorDataIn.ptr,
+                                                                 convParams.h_kemImgTensorDataIn.grid.totalSize()),
+                                          "GKNN_kemImgTensorDataIn");
+        auto kemGrids = convParams.h_kemImgTensorDataIn.grid;
+        auto gknnConv3D = std::make_unique<node::KGConv3D>();
+        gknnConv3D->setKNNNumbers(convParams.KNNNumbers);
+        gknnConv3D->setFeatureSizeHalf(convParams.FeatureSizeHalf);
+        gknnConv3D->setKNNSearchSizeHalf(convParams.SearchSizeHalf);
+        gknnConv3D->setKNNSigmaG2(convParams.SigmaG2);
+        gknnConv3D->setHWHM(convParams.HWHM);
+        gknnConv3D->setDTensorDataIn(d_kemImgData.get(), kemGrids);
+        convPtr = std::move(gknnConv3D);
+        convPtr->convD(core::Image3DIO<float>{kemGrids, d_kemImgData.get(), d_kemImgData.get()});
 
+        // gknnConv3D->setKNNNumbers(std::get<GKNNConvParams>(params.convParams).KNNNumbers);
+        // gknnConv3D->setFeatureSizeHalf(std::get<GKNNConvParams>(params.convParams).FeatureSizeHalf);
+        // gknnConv3D->setKNNSearchSizeHalf(std::get<GKNNConvParams>(params.convParams).SearchSizeHalf);
+        // gknnConv3D->setKNNSigmaG2(std::get<GKNNConvParams>(params.convParams).SigmaG2);
+        // gknnConv3D->setHWHM(std::get<GKNNConvParams>(params.convParams).HWHM);
+        // gknnConv3D->setDTensorDataIn((std::get<GKNNConvParams>(params.convParams)).getDTensorDataIn());
+        // convPtr = std::move(gknnConv3D);
+        // set bigVoxelScatterSimulation to false to avoid issues
+        params.bigVoxelScatterSimulation = false;
+
+        // // test to see if gknn set correctly
+        // auto d_kemTestImgData = make_cuda_sync_ptr_from_hcopy(
+        //     std::span<const float>(std::get<GKNNConvParams>(params.convParams).h_kemImgTensorDataIn.ptr,
+        //                            std::get<GKNNConvParams>(params.convParams).h_kemImgTensorDataIn.grid.totalSize()),
+        //     "GKNN_kemImgTestTensorDataIn");
+        // convPtr->convD(core::Image3DIO<float>{kemGrids, d_kemTestImgData.get(), d_kemTestImgData.get()});
+        // convPtr->deconvD(core::Image3DIO<float>{kemGrids, d_kemTestImgData.get(), d_kemTestImgData.get()});
+        // // save
+        // {
+        //   std::vector<float> h_out_testKemImg(kemGrids.totalSize());
+        //   d_kemTestImgData.allocator().copy_from_device_to_host(h_out_testKemImg.data(), d_kemTestImgData.cspan());
+        //   std::ofstream orginImgFile("/media/cmx/K1/v4_coin/data/930TOFOSEMTest/Original_KEMTEST.bin",
+        //                              std::ios::binary);
+        //   if (orginImgFile.is_open()) {
+        //     orginImgFile.write(
+        //         reinterpret_cast<const char *>(std::get<GKNNConvParams>(params.convParams).h_kemImgTensorDataIn.ptr),
+        //         kemGrids.totalSize() * sizeof(float));
+        //     orginImgFile.close();
+        //     std::cout << "Original_KEMTEST dumped to Data/result/Original_KEMTEST.bin" << std::endl;
+        //   }
+
+        //   std::ofstream kemFile("/media/cmx/K1/v4_coin/data/930TOFOSEMTest/KEMTEST.bin", std::ios::binary);
+        //   if (kemFile.is_open()) {
+        //     kemFile.write(reinterpret_cast<const char *>(h_out_testKemImg.data()),
+        //                   kemGrids.totalSize() * sizeof(float));
+        //     kemFile.close();
+        //     std::cout << "GKNN_kemImgTensorDataOut dumped to Data/result/GKNN_kemImgTensorDataOut.bin" << std::endl;
+        //   }
+        // }
+      }
       OSEM_context_listmode context;
       context.michCrystal = std::make_unique<node::MichCrystal>(mich);
-      context.senmap = std::make_unique<node::MichSenmap>(conv3D, mich);
+      context.senmap = std::make_unique<node::MichSenmap>(*convPtr, mich);
       context.senmap->setSubsetNum(params.subsetNum);
       context.senmap->setMode(node::MichSenmap::Mode_listmode);
       if (norm)
         context.senmap->bindNormalization(norm.get());
       if (attn)
         context.senmap->bindAttenuation(attn.get());
-      context.convolver = &conv3D;
+      context.convolver = convPtr.get();
 
-      PNI_DEBUG(std::format("Thread for GPU {} started.\n", i));
+      PNI_DEBUG(std::format("Thread for GPU {} started.\n", gpu_id));
       while (cycleBuffer.read([&](const MultiGPUData &data) {
         PNI_DEBUG(std::format("Processing {} listmode events...\n", data.listmodes.size()));
         context.events_count = data.listmodes.size();
@@ -712,14 +907,35 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
         context.Listmode_data.allocator().copy_from_host_to_device(
             context.Listmode_data.get(), std::span<openpni::basic::Listmode_t const>(data.listmodes));
 
-        if (scat)
+        if (scat) {
           scat->bindDListmode(context.Listmode_data.span(context.events_count));
-        scat->setTOFParams(params.tofSSS_timeBinWidth_ps, params.tofSSS_timeBinStart_ps, params.tofSSS_timeBinEnd_ps,
-                           params.tofSSS_systemTimeRes_ns);
+          scat->setTOFParams(params.tofSSS_timeBinWidth_ns, params.tofSSS_timeBinStart_ns, params.tofSSS_timeBinEnd_ns,
+                             params.tofSSS_systemTimeRes_ns);
+        }
         if (rand) {
-          rand->setRandomRatio(double(context.events_count) / double(totalEvents));
-          PNI_DEBUG(std::format("GPU {} set random ratio to {}, events_count {} total {}\n", i,
-                                double(context.events_count) / double(totalEvents), context.events_count, totalEvents));
+          auto countRatio = double(context.events_count) / double(totalEvents);
+          auto timeRatio = double(params.TOFBinWid_ps) / double(params.timeWindow_ps);
+          michRand->setCountRatio(countRatio);
+          michRand->setTimeBinRatio(timeRatio);
+          PNI_DEBUG(std::format("GPU {} set count ratio to {},timeBin ratio to {} ,events_count {} total {}\n", gpu_id,
+                                countRatio, timeRatio, context.events_count, totalEvents));
+          // // test
+          // auto randresult = rand->dumpFactorsAsHMich();
+          // // save
+          // {
+          //   auto michInfo = MichInfoHub(mich);
+
+          //   std::ofstream randFile(
+          //       std::format("/media/cmx/K1/v4_coin/data/930TOFOSEMTest/RandomFactors_GPU{}.bin", gpu_id),
+          //       std::ios::binary);
+          //   if (randFile.is_open()) {
+          //     randFile.write(reinterpret_cast<const char *>(randresult.get()), michInfo.getMichSize() *
+          //     sizeof(float)); randFile.close(); std::cout << std::format("RandomFactors_GPU{} dumped to
+          //     Data/result/RandomFactors_GPU{}.bin", gpu_id,
+          //                              gpu_id)
+          //               << std::endl;
+          //   }
+          // }
         }
 
         auto *t_norm = norm.get();
@@ -734,7 +950,7 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
         _params.iterNum = params.iterNum;
         _params.subsetNum = params.subsetNum;
         _params.sample_rate = params.sample_rate;
-        _params.TOF_division = params.TOF_division;
+        _params.TOF_division = params.TOF_division_ps;
         _params.binCutRatio = params.binCutRatio;
         _params.scatterSimulations = params.scatterSimulations;
         _params.listmodeFileTimeBegin_ms = params.timeBegin_ms;
@@ -745,30 +961,41 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
 
         for (auto scatterIter = 0; scatterIter <= params.scatterSimulations; scatterIter++) {
           auto osem_grid = grid;
-          if (scat && scatterIter < params.scatterSimulations)
+          if (scat && scatterIter < params.scatterSimulations && params.bigVoxelScatterSimulation)
             osem_grid = bigGrid;
-          d_parralel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
+          d_parallel_fill(d_out_OSEMImg.get(), 1.0f, grid.totalSize());
           osem_impl_listmodeTOF_CUDA(core::Image3DOutput<float>{osem_grid, d_out_OSEMImg}, _params, t_norm, t_rand,
                                      t_scat, t_attn, mich, context);
           d_out_OSEMImg.allocator().copy_from_device_to_device(d_out_OSEMImgPair.data(), d_out_OSEMImg.cspan());
+          // if KEM or GKEM method,deconvelution after reconstruction
+          if (std::holds_alternative<GKNNConvParams>(params.convParams) ||
+              std::holds_alternative<GaussianConvParams>(params.convParams)) {
+            convPtr->deconvD(core::Image3DIO<float>{osem_grid, d_out_OSEMImgPair.get(), d_out_OSEMImgPair.get()});
+          }
           if (scat && scatterIter < params.scatterSimulations)
             scat->bindDEmissionMap(osem_grid, d_out_OSEMImgPair);
         }
 
         PNI_DEBUG(std::format("Chunk processing complete.\n"));
+        // if knn do one more conv
+        if (std::holds_alternative<GKNNConvParams>(params.convParams) ||
+            std::holds_alternative<KNNConvParams>(params.convParams)) {
+          convPtr->deconvD(core::Image3DIO<float>{grid, d_out_OSEMImgPair.get(), d_out_OSEMImgPair.get()});
+        }
+
         auto h_img = make_vector_from_cuda_sync_ptr(d_out_OSEMImg, d_out_OSEMImg.cspan());
         std::lock_guard lock(h_addMutex);
         tools::parallel_for_each(d_out_OSEMImg.elements(), [&](size_t idx) { out_OSEMImg.ptr[idx] += h_img[idx]; });
-        PNI_DEBUG(std::format("GPU {} image max value: {}.\n", i,
+        PNI_DEBUG(std::format("GPU {} image max value: {}.\n", gpu_id,
                               *std::max_element(h_img.data(), h_img.data() + grid.totalSize())));
       }))
         ;
-      PNI_DEBUG(std::format("Thread for GPU {} ending.\n", i));
+      PNI_DEBUG(std::format("Thread for GPU {} ending.\n", gpu_id));
     });
   }
   misc::ListmodeBuffer listmodeBuffer;
   listmodeBuffer
-      .setBufferSize(find_value(totalEvents, _GB(params.size_GB) / sizeof(openpni::basic::Listmode_t), gpuNum))
+      .setBufferSize(find_value(totalEvents, _GB(params.size_GB) / sizeof(openpni::basic::Listmode_t), gpu_ids.size()))
       .callWhenFlush([&](const openpni::basic::Listmode_t *__data, std::size_t __count) noexcept {
         cycleBuffer.write([&](MultiGPUData &data) noexcept {
           data.listmodes.resize(__count);
@@ -779,10 +1006,150 @@ void instant_OSEM_listmodeTOF_MULTI_CUDA(
   for (auto &lmFile : listmodeFiles)
     listmodeBuffer.append(*lmFile.file, lmFile.segments);
   listmodeBuffer.flush();
-  PNI_DEBUG("OSEM_listModeTOF_CUDA done.\n");
   cycleBuffer.stop();
 
   for (auto &t : threadsGPU)
     t.join();
+}
+
+void instant_FBP_mich_CUDA(
+    core::Image3DOutput<float> out_FBPImg, FBP_params params, float const *h_michValue, core::MichDefine const &mich) {
+  // 将 experimental::core::PolygonalSystem 转换为 example::PolygonalSystem
+  openpni::example::PolygonalSystem examplePolygon;
+  examplePolygon.edges = mich.polygon.edges;
+  examplePolygon.detectorPerEdge = mich.polygon.detectorPerEdge;
+  examplePolygon.detectorLen = mich.polygon.detectorLen;
+  examplePolygon.radius = mich.polygon.radius;
+  examplePolygon.angleOf1stPerp = mich.polygon.angleOf1stPerp;
+  examplePolygon.detectorRings = mich.polygon.detectorRings;
+  examplePolygon.ringDistance = mich.polygon.ringDistance;
+
+  auto e180Builder = openpni::example::polygon::PolygonModelBuilder<openpni::device::bdm2::BDM2Runtime>(examplePolygon);
+  auto e180System = e180Builder.build();
+  const auto &systemDef = e180System->polygonSystem();
+  const auto &detectorGeom = e180System->detectorInfo().geometry;
+
+  auto imginfo = out_FBPImg.grid;
+  int nImgWidth = imginfo.size.dimSize[0];
+  int nImgHeight = imginfo.size.dimSize[1];
+  int nImgDepth = imginfo.size.dimSize[2];
+  float voxelSizeXY = imginfo.spacing[0];
+  float voxelSizeZ = imginfo.spacing[2];
+
+  // 构建 FBPParam (内部参数结构体)
+  openpni::process::fbp::FBPParam fbpParam;
+  fbpParam.nRingDiff = params.nRingDiff;
+  fbpParam.dBinMin = -0.9 * examplePolygon.radius;
+  fbpParam.dBinMax = 0.9 * examplePolygon.radius;
+  fbpParam.nSampNumInBin = params.nSampNumInBin;
+  fbpParam.nSampNumInView = params.nSampNumInView;
+  fbpParam.nImgWidth = nImgWidth;
+  fbpParam.nImgHeight = nImgHeight;
+  fbpParam.nImgDepth = nImgDepth;
+  fbpParam.voxelSizeXY = voxelSizeXY;
+  fbpParam.voxelSizeZ = voxelSizeZ;
+  fbpParam.deltalim = params.deltalim;
+  fbpParam.klim = params.klim;
+  fbpParam.wlim = params.wlim;
+  fbpParam.sampling_distance_in_s = params.sampling_distance_in_s;
+  fbpParam.detectorLen = params.detectorLen;
+
+  openpni::basic::Image3DGeometry outputGeometry;
+  outputGeometry.voxelSize = {voxelSizeXY, voxelSizeXY, voxelSizeZ};
+  outputGeometry.voxelNum = {nImgWidth, nImgHeight, nImgDepth};
+  outputGeometry.imgBegin = {-(nImgWidth * voxelSizeXY) / 2.0f, -(nImgHeight * voxelSizeXY) / 2.0f,
+                             -(nImgDepth * voxelSizeZ) / 2.0f};
+  if (params.rebinMethod == FBP_RebinMethod::SSRB) {
+    openpni::process::fbp::FBP_SSRB(fbpParam, h_michValue, systemDef, detectorGeom, out_FBPImg.ptr, outputGeometry);
+  } else if (params.rebinMethod == FBP_RebinMethod::FORE) {
+    openpni::process::fbp::FBP_FORE(fbpParam, h_michValue, systemDef, detectorGeom, out_FBPImg.ptr, outputGeometry);
+  }
+}
+void instant_FDK_CUDA(
+    core::Image3DOutput<float> out_FDKImg, FDK_params params, io::U16Image const &ctImage,
+    io::U16Image const &airImage) {
+  using CTRawDataType = io::U16Image;
+  auto imginfo = out_FDKImg.grid;
+  int nImgWidth = imginfo.size.dimSize[0];
+  int nImgHeight = imginfo.size.dimSize[1];
+  int nImgDepth = imginfo.size.dimSize[2];
+  float voxelSizeXY = imginfo.spacing[0];
+  float voxelSizeZ = imginfo.spacing[2];
+
+  openpni::basic::Image3DGeometry outputGeometry;
+  outputGeometry.voxelSize = {voxelSizeXY, voxelSizeXY, voxelSizeZ};
+  outputGeometry.voxelNum = {nImgWidth, nImgHeight, nImgDepth};
+  outputGeometry.imgBegin = {-(nImgWidth * voxelSizeXY) / 2.0f, -(nImgHeight * voxelSizeXY) / 2.0f,
+                             -(nImgDepth * voxelSizeZ) / 2.0f};
+  auto d_imgOut = make_cuda_sync_ptr<float>(outputGeometry.totalVoxelNum());
+  d_imgOut.allocator().memset(0, d_imgOut.span());
+
+  // Convert uint16_t projection data to float on host before copying to device
+  auto projections_float = std::vector<float>(ctImage.cspan().begin(), ctImage.cspan().end());
+  auto d_projections = make_cuda_sync_ptr_from_hcopy(std::span<const float>(projections_float));
+
+  // Convert uint16_t air data to float on host before copying to device
+  auto airPixelSize = airImage.imageGeometry().voxelNum.x * airImage.imageGeometry().voxelNum.y;
+  auto air_float = std::vector<float>(airImage.cspan().subspan(0, airPixelSize).begin(),
+                                      airImage.cspan().subspan(0, airPixelSize).end());
+  auto d_air = make_cuda_sync_ptr_from_hcopy(std::span<const float>(air_float));
+
+  openpni::process::CBCTDataView dataView;
+  std::vector<process::CBCTProjectionInfo> projectionInfos(ctImage.imageGeometry().voxelNum.z);
+  for (const auto angleIndex : std::views::iota(0ull, projectionInfos.size())) {
+    auto &projectionInfo = projectionInfos[angleIndex];
+    const auto rotationAngle = (angleIndex * 360. / projectionInfos.size()) * M_PI / 180.0;
+    const auto originDirectionU = basic::make_vec3<float>(1, 0, 0);
+    const auto originDirectionV = basic::make_vec3<float>(0, 0, 1);
+    const auto originPositionD = basic::make_vec3<float>(0, params.geo_SOD - params.geo_SDD, 0);
+    const auto originPositionX = basic::make_vec3<float>(0, params.geo_SOD, 0);
+    const auto rotation = basic::rotationMatrixZ<float>(rotationAngle);
+    projectionInfo.directionU = originDirectionU * rotation;
+    projectionInfo.directionV = originDirectionV * rotation;
+    projectionInfo.positionD = originPositionD * rotation;
+    projectionInfo.positionX = originPositionX * rotation;
+  }
+  const auto projectionDataPtrs = [&]() {
+    std::vector<float *> result;
+    const std::size_t count = ctImage.imageGeometry().voxelNum.z;
+    const std::size_t step = ctImage.imageGeometry().voxelNum.x * ctImage.imageGeometry().voxelNum.y;
+    for (std::size_t i = 0; i < count * step; i += step)
+      result.push_back(d_projections.get() + i);
+    return result;
+  }();
+  const auto airDataPtrs = std::vector<float *>(ctImage.imageGeometry().voxelNum.z, d_air.get());
+  const auto d_projectionInfos = make_cuda_sync_ptr_from_hcopy(projectionInfos);
+
+  dataView.pixels = basic::make_vec2<unsigned>(ctImage.imageGeometry().voxelNum.x, ctImage.imageGeometry().voxelNum.y);
+  dataView.pixelSize = basic::make_vec2<float>(params.pixelSizeU, params.pixelSizeV);
+  dataView.airDataPtrs =
+      reinterpret_cast<const float *const *>(airDataPtrs.data()); // airDataPtrs already contains float*
+  dataView.geo_angle = params.geo_angle;
+  dataView.geo_offsetU = params.geo_offsetU;
+  dataView.geo_offsetV = params.geo_offsetV;
+  dataView.geo_SDD = params.geo_SDD;
+  dataView.geo_SOD = params.geo_SOD;
+  dataView.fouriorCutoffLength = params.fouriorCutoffLength;
+  dataView.beamHardenParamA = params.beamHardenParamA;
+  dataView.beamHardenParamB = params.beamHardenParamB;
+
+  const basic::Image3DGeometry sliceImageGeometry = basic::make_ImageSizeByCenter(
+      basic::make_vec3<float>(voxelSizeXY, voxelSizeXY, voxelSizeZ), basic::make_vec3<float>(0, 0, 0),
+      basic::make_vec3<int>(nImgWidth, nImgHeight, projectionInfos.size()));
+  io::F32Image sliceOneByOneImage(sliceImageGeometry);
+  for (const auto sliceIndex : std::views::iota(0ull, projectionInfos.size())) {
+    dataView.projectionDataPtrs = reinterpret_cast<const float *const *>(
+        projectionDataPtrs.data() + sliceIndex); // projectionDataPtrs already contains float*
+    dataView.projectionInfo = d_projectionInfos.get() + sliceIndex;
+    dataView.projectionNum = 1;
+    process::FDK_CUDA(dataView, d_imgOut.get(), outputGeometry);
+  }
+  process::FDK_PostProcessing(d_imgOut, outputGeometry, ctImage, params.ct_slope, params.ct_intercept,
+                              params.co_offset_x, params.co_offset_y);
+
+  // 从设备内存复制处理结果回主机
+  io::F32Image outputImage(outputGeometry);
+  d_imgOut.allocator().copy_from_device_to_host(outputImage.data(), d_imgOut.cspan());
+  std::copy(outputImage.data(), outputImage.data() + outputGeometry.totalVoxelNum(), out_FDKImg.ptr);
 }
 } // namespace openpni::experimental::example

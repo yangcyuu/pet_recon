@@ -1,6 +1,5 @@
 #pragma once
 #include <cmath>
-#include <cuda_runtime_api.h>
 #include <type_traits>
 namespace openpni {
 template <typename T>
@@ -113,6 +112,10 @@ struct FMath<float> {
       float x) {
     return ceil(x);
   }
+  __PNI_CUDA_MACRO__ static constexpr float ferf(
+      float x) {
+    return erff(x);
+  }
 };
 template <>
 struct FMath<double> {
@@ -188,6 +191,10 @@ struct FMath<double> {
   __PNI_CUDA_MACRO__ static constexpr double fceil(
       double x) {
     return ceil(x);
+  }
+  __PNI_CUDA_MACRO__ static constexpr double ferf(
+      double x) {
+    return erf(x);
   }
 };
 

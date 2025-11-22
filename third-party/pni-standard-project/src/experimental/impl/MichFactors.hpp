@@ -41,7 +41,6 @@ inline std::pair<std::vector<float>, std::vector<float>> calBlockLORAndFanLOR(
     std::vector<float> fanLOR;
   };
   std::vector<std::future<reduce_result>> futuresReduce;
-  std::mutex l;
   for (const auto [begin, end] :
        tools::chunked_ranges_generator.by_group_count(0, michInfo.getLORNum(), tools::cpu_threads().threadNum())) {
     futuresReduce.emplace_back(std::async(std::launch::async, [&, begin, end]() {
@@ -549,4 +548,9 @@ void d_calNormFactorsAll(core::MichDefine __mich, std::span<core::MichStandardEv
                          float const *__dtComponent, FactorBitMask __factorBitMask);
 void d_getDScatterFactorsBatch(float *__outFct, const float *__sssValue,
                                std::span<core::MichStandardEvent const> events, core::MichDefine __michDefine);
+void d_getDScatterFactorsBatchTOF(float *__outFct, const float *__sssTOFTable,
+                                  const core::CrystalGeom *__d_crystalGeometry,
+                                  const core::CrystalGeom *__d_dsCrystalGeometry,
+                                  std::span<core::MichStandardEvent const> __events, core::MichDefine __michDefine,
+                                  core::MichDefine __dsmichDefine, float __tofBinWidth, int __tofBinNum);
 } // namespace openpni::experimental::node::impl

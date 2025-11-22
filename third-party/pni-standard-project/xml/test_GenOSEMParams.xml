@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="michOSEMParams">
+    <SubsetNum  type="int" />
+    <IterNum  type="int" />
+    <BinCutRatio  type="double" />
+    <SampleRate  type="double" />
+    <ScatterSimulations  type="int" />
+    <ConvHWHM  type="double" />
+    <ImgGridsX  type="double" />
+    <ImgGridsY  type="double" />
+    <ImgGridsZ  type="double" />
+    <ImgGridsNumX  type="int" />
+    <ImgGridsNumY  type="int" />
+    <ImgGridsNumZ  type="int" />
+    <HasNorm type="bool" />
+    <HasAttn type="bool" />
+    <HasRand type="bool" />
+    <HasScat type="bool" />
+    <HasDeadtime type="bool" />
+</Main>

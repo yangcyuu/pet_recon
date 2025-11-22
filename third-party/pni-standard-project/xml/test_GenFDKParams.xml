@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="FDKParams">
+    <Geo_angle type="double" />
+    <Geo_offsetU type="double" />
+    <Geo_offsetV type="double" />
+    <Geo_SDD type="double" />
+    <Geo_SOD type="double" />
+    <FouriorCutoffLength type="int" />
+    <BeamHardenParamA type="double" />
+    <BeamHardenParamB type="double" />
+    <Ct_slope type="double" />
+    <Ct_intercept type="double" />
+    <Co_offset_x type="double" />
+    <Co_offset_y type="double" />
+    <PixelSizeU type="double" />
+    <PixelSizeV type="double" />
+    <ImgGridsX  type="double" />
+    <ImgGridsY  type="double" />
+    <ImgGridsZ  type="double" />
+    <ImgGridsNumX  type="int" />
+    <ImgGridsNumY  type="int" />
+    <ImgGridsNumZ  type="int" />
+</Main>

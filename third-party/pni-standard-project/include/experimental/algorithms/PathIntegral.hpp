@@ -9,12 +9,11 @@ __PNI_CUDA_MACRO__ inline F calculate_path_integrals_impl(
     core::DirectionalLineSegment<F, N> __line_segment, openpni::experimental::core::TensorDataInput<F, N> __Img,
     SampMethod __sampler, InterpolationGetter __interpolator) {
   F integral_sum{0};
-  const auto segment_length = __line_segment.getLength();
   while (__sampler.has_next()) {
     const auto [t, step] = __sampler.next();                  // 获取下一个采样点参数t
     const auto sample_point_vec = __line_segment.getPoint(t); // 使用有向线段直接获取采样点
     F value = __interpolator.get(sample_point_vec);           // 在采样点处进行插值，获取图像值
-    integral_sum += value * step * segment_length;            // 累加到积分和中（值 * 步长）
+    integral_sum += value * step;                             // 累加到积分和中（值 * 步长）
   }
   return integral_sum;
 }
@@ -24,11 +23,10 @@ template <typename LineSegment, typename TensorInput, typename PathValue, typena
 __PNI_CUDA_MACRO__ inline void calculate_path_reverse_integrals_impl(
     LineSegment __line_segment, TensorInput __Img, PathValue __pathValue, SampMethod __sampler,
     InterpolationSetter __interpolator) {
-  const auto segment_length = __line_segment.getLength();
   while (__sampler.has_next()) {
-    const auto [t, step] = __sampler.next();                                   // 获取下一个采样点参数t
-    const auto sample_point_vec = __line_segment.getPoint(t);                  // 使用有向线段直接获取采样点
-    __interpolator.add(sample_point_vec, __pathValue * step * segment_length); // 反向投影（值 * 步长）
+    const auto [t, step] = __sampler.next();                  // 获取下一个采样点参数t
+    const auto sample_point_vec = __line_segment.getPoint(t); // 使用有向线段直接获取采样点
+    __interpolator.add(sample_point_vec, __pathValue * step); // 反向投影（值 * 步长）
   }
 }
 

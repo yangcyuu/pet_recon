@@ -17,7 +17,7 @@ void appendToBuffer(
     if (listmodes.size() < segmentHeader.count)
       listmodes.resize(segmentHeader.count);
     io::listmode::decompress(listmodes.data(), __file.header(), segmentHeader, segmentData);
-    __buffer.append(listmodes.data()+view.dataIndexBegin, view.dataIndexEnd-view.dataIndexBegin);
+    __buffer.append(listmodes.data() + view.dataIndexBegin, view.dataIndexEnd - view.dataIndexBegin);
   }
 }
 

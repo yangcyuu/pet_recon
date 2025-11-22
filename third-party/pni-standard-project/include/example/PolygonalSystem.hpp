@@ -409,8 +409,8 @@ __PNI_CUDA_MACRO__ inline std::size_t calLORIDFromSubsetId(
   std::size_t viewNumInSubset = calViewNumInSubset(__polygon, __detector, subsetNum, subsetId);
 
   std::size_t binIndex = (id % (binNum - 2 * binCut)) + binCut;
-  std::size_t viewIndexInSubset = (id / (binNum - 2 * binCut)) % viewNumInSubset;
-  std::size_t sliceIndex = id / ((binNum - 2 * binCut) * viewNum) % sliceNum;
+  std::size_t sliceIndex = (id / (binNum - 2 * binCut)) % sliceNum;
+  std::size_t viewIndexInSubset = id / ((binNum - 2 * binCut) * sliceNum);
 
   std::size_t result = sliceIndex * binNum * viewNum + (viewIndexInSubset * subsetNum + subsetId) * binNum + binIndex;
   return result;

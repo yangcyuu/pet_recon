@@ -30,7 +30,6 @@ public:
   ~MichAttn_impl() = default;
 
 public:
-  std::unique_ptr<MichAttn_impl> copy();
   auto mich() const -> core::MichDefine { return m_michDefine; }
   void setPreferredSource(MichAttn::AttnFactorSource source);
   void setFetchMode(MichAttn::AttnFactorFetchMode mode);
@@ -319,14 +318,6 @@ core::Grids<3> MichAttn_impl::getMapGrids() const {
   if (m_grid)
     return *m_grid;
   throw exceptions::algorithm_unexpected_condition("No map grid set.");
-}
-
-std::unique_ptr<MichAttn_impl> MichAttn_impl::copy() {
-  auto new_impl = std::make_unique<MichAttn_impl>(m_michDefine);
-  new_impl->m_grid = m_grid;
-  new_impl->mh_HUMap_ = mh_HUMap_;
-  new_impl->mh_AttnMap_ = mh_AttnMap_;
-  return new_impl;
 }
 
 // // temp, for test

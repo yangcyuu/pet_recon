@@ -20,10 +20,8 @@ public:
   MichSenmap(interface::Conv3D &__conv3D, const core::MichDefine &__mich);
   MichSenmap(std::unique_ptr<MichSenmap_impl> &&impl);
   ~MichSenmap();
-  MichSenmap copy(interface::Conv3D &__newConv3D); // 重新绑定卷积核
 
 public:
-  void join(MichSenmap *other);
   void setSubsetNum(int num);
   void setMaxBufferedImages(int num);
   void setPreferredSource(SenmapSource source);

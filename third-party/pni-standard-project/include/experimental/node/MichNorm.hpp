@@ -21,10 +21,9 @@ class MichNormalization {
 public:
   MichNormalization(core::MichDefine mich);
   MichNormalization(std::unique_ptr<MichNormalization_impl> impl);
-  MichNormalization(MichNormalization &&) = default;
+  MichNormalization(MichNormalization &&) noexcept;
+  MichNormalization &operator=(MichNormalization &&) noexcept;
   ~MichNormalization();
-  MichNormalization copy() const;
-  std::unique_ptr<MichNormalization> copyPtr();
 
 public:                                 // Preparing parameters
   void setShell(                        // 设置壳体的尺寸
@@ -55,12 +54,19 @@ public:
                                     FactorBitMask im = FactorBitMask::All);
   float const *getDNormFactorsBatch(std::span<std::size_t const> lorIndices, FactorBitMask im = FactorBitMask::All);
   std::unique_ptr<float[]> dumpNormalizationMich();
-  std::unique_ptr<float[]> getActivityMich();
+  std::unique_ptr<float[]> dumpActivityMich();
   std::unique_ptr<float[]> dumpCryFctMich();
   std::unique_ptr<float[]> dumpBlockFctMich();
   std::unique_ptr<float[]> dumpRadialFctMich();
   std::unique_ptr<float[]> dumpPlaneFctMich();
   std::unique_ptr<float[]> dumpInterferenceFctMich();
+  std::vector<float> dumpCryCount();
+  std::vector<float> dumpBlockFctA();
+  std::vector<float> dumpBlockFctT();
+  std::vector<float> dumpPlaneFct();
+  std::vector<float> dumpRadialFct();
+  std::vector<float> dumpInterferenceFct();
+  std::vector<float> dumpCryFct();
 
 private:
   std::unique_ptr<MichNormalization_impl> m_impl;

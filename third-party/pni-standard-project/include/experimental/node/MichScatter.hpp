@@ -10,10 +10,9 @@ class MichScatter {
 public:
   MichScatter(core::MichDefine mich);
   MichScatter(std::unique_ptr<MichScatter_impl> impl);
-  MichScatter(MichScatter &&) = default;
+  MichScatter(MichScatter &&) noexcept;
+  MichScatter &operator=(MichScatter &&) noexcept;
   ~MichScatter();
-  MichScatter copy();
-  std::unique_ptr<MichScatter> copyPtr();
 
 public:
   void setScatterPointsThreshold(double v);

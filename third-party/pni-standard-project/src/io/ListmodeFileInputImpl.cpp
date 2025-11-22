@@ -16,7 +16,8 @@ void ListmodeFileInput_impl::open(
   m_fileSize = m_file.seekg(0, std::ios_base::end).tellg();
   m_file.seekg(0, std::ios_base::beg);
 
-  std::optional<ListmodeFileHeader> header = misc::HeaderWithSizeReserved<ListmodeFileHeader, LISTMODE_FILE_HEADER_SIZE>::readFromStream(m_file);
+  std::optional<ListmodeFileHeader> header =
+      misc::HeaderWithSizeReserved<ListmodeFileHeader, LISTMODE_FILE_HEADER_SIZE>::readFromStream(m_file);
   if (!header)
     throw openpni::exceptions::file_format_incorrect();
   if (::strcmp(m_header.fileTypeName, "PNI-LSTMODE"))
@@ -31,20 +32,23 @@ void ListmodeFileInput_impl::open(
   while (true) {
     SegmentInfo segmentInfo;
     auto &segmentHeader = segmentInfo.header;
-    if (!misc::HeaderWithSizeReserved<ListmodeSegmentHeader, LISTMODE_SEGMENT_HEADER_SIZE>::readFromStream(m_file, segmentHeader))
+    if (!misc::HeaderWithSizeReserved<ListmodeSegmentHeader, LISTMODE_SEGMENT_HEADER_SIZE>::readFromStream(
+            m_file, segmentHeader))
       throw openpni::exceptions::file_format_incorrect();
 
     currentReadPosition = m_file.tellg();
     segmentInfo.offsetOfCrystalIndex1 = currentReadPosition;
     segmentInfo.offsetOfCrystalIndex2 = currentReadPosition + segmentHeader.count * m_header.bytes4CrystalIndex1;
-    segmentInfo.offsetOfTimeValue1_2 = segmentInfo.offsetOfCrystalIndex2 + segmentHeader.count * m_header.bytes4CrystalIndex2;
+    segmentInfo.offsetOfTimeValue1_2 =
+        segmentInfo.offsetOfCrystalIndex2 + segmentHeader.count * m_header.bytes4CrystalIndex2;
 
-    size_t nextReadPosition = currentReadPosition = segmentInfo.offsetOfTimeValue1_2 + segmentHeader.count * m_header.bytes4TimeValue1_2;
+    size_t nextReadPosition = currentReadPosition =
+        segmentInfo.offsetOfTimeValue1_2 + segmentHeader.count * m_header.bytes4TimeValue1_2;
     if (nextReadPosition > m_fileSize)
       throw openpni::exceptions::file_format_incorrect();
+    m_segmentInfos.push_back(segmentInfo);
     if (nextReadPosition == m_fileSize)
       break;
-    m_segmentInfos.push_back(segmentInfo);
     m_file.seekg(nextReadPosition, std::ios_base::beg);
   }
 }
@@ -69,8 +73,9 @@ ListmodeSegmentBytes ListmodeFileInput_impl::readSegment(
     m_prefetchFuture.wait();
     auto [lastPrefetchIndex, lastPrefetchData] = m_prefetchFuture.get();
     if (prefetchIndex < m_segmentInfos.size())
-      m_prefetchFuture =
-          std::async(std::launch::async, [prefetchIndex, this] noexcept { return std::pair{prefetchIndex, this->readSegment_impl(prefetchIndex)}; });
+      m_prefetchFuture = std::async(std::launch::async, [prefetchIndex, this] noexcept {
+        return std::pair{prefetchIndex, this->readSegment_impl(prefetchIndex)};
+      });
     if (lastPrefetchIndex == segmentIndex) {
       return std::move(lastPrefetchData);
     } else {
@@ -79,8 +84,9 @@ ListmodeSegmentBytes ListmodeFileInput_impl::readSegment(
   } else {
     auto result = readSegment_impl(segmentIndex);
     if (prefetchIndex < m_segmentInfos.size())
-      m_prefetchFuture =
-          std::async(std::launch::async, [prefetchIndex, this] noexcept { return std::pair{prefetchIndex, this->readSegment_impl(prefetchIndex)}; });
+      m_prefetchFuture = std::async(std::launch::async, [prefetchIndex, this] noexcept {
+        return std::pair{prefetchIndex, this->readSegment_impl(prefetchIndex)};
+      });
     return result;
   }
 }
@@ -106,13 +112,16 @@ ListmodeSegmentBytes ListmodeFileInput_impl::readSegment_impl(
   const auto bytes4TimeValue1_2 = m_header.bytes4TimeValue1_2 * segmentInfo.header.count;
 
   if (bytes4CrystalIndex1 > 0) {
-    m_file.seekg(segmentInfo.offsetOfCrystalIndex1, std::ios_base::beg).read(result.crystalIndex1Bytes.get(), bytes4CrystalIndex1);
+    m_file.seekg(segmentInfo.offsetOfCrystalIndex1, std::ios_base::beg)
+        .read(result.crystalIndex1Bytes.get(), bytes4CrystalIndex1);
   }
   if (bytes4CrystalIndex2 > 0) {
-    m_file.seekg(segmentInfo.offsetOfCrystalIndex2, std::ios_base::beg).read(result.crystalIndex2Bytes.get(), bytes4CrystalIndex2);
+    m_file.seekg(segmentInfo.offsetOfCrystalIndex2, std::ios_base::beg)
+        .read(result.crystalIndex2Bytes.get(), bytes4CrystalIndex2);
   }
   if (bytes4TimeValue1_2 > 0) {
-    m_file.seekg(segmentInfo.offsetOfTimeValue1_2, std::ios_base::beg).read(result.timeValue1_2Bytes.get(), bytes4TimeValue1_2);
+    m_file.seekg(segmentInfo.offsetOfTimeValue1_2, std::ios_base::beg)
+        .read(result.timeValue1_2Bytes.get(), bytes4TimeValue1_2);
   }
   return result;
 }

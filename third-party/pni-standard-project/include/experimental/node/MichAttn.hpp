@@ -14,10 +14,9 @@ public:
 public:
   MichAttn(core::MichDefine __mich);
   MichAttn(std::unique_ptr<MichAttn_impl> impl);
-  MichAttn(MichAttn &&other) = default;
+  MichAttn(MichAttn &&other) noexcept;
+  MichAttn &operator=(MichAttn &&other) noexcept;
   ~MichAttn();
-  MichAttn copy();
-  std::unique_ptr<MichAttn> copyPtr();
 
 public:
   core::MichDefine mich() const;

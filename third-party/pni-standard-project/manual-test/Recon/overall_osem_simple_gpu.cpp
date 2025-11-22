@@ -1,14 +1,11 @@
 #include <iostream>
 
-#include "PnI-Config.hpp"
 #include "../public.hpp"
-#include "experimental/tools/Parallel.hpp"
-#include "experimental/core/Image.hpp"
-#include "experimental/example/SimplyRecon.hpp"
-#include "experimental/node/GaussConv3D.hpp"
-// #include "experimental/impl/MichAttnImpl.hpp"
-// #include "experimental/impl/MichNormImpl.hpp"
-// #include "experimental/impl/Random.h"
+#include "include/experimental/example/SimplyRecon.hpp"
+#include "include/experimental/node/GaussConv3D.hpp"
+#include "src/experimental/impl/MichAttnImpl.hpp"
+#include "src/experimental/impl/MichNormImpl.hpp"
+#include "src/experimental/impl/Random.h"
 using namespace openpni::experimental;
 constexpr int minSectorDifference{4};
 constexpr int radialModuleNumS{6};
@@ -19,81 +16,146 @@ constexpr core::Vector<double, 3> scatterEnergyWindow{350.00, 650.00, 0.15};
 constexpr core::Vector<double, 3> scatterEffTableEnergy{0.01, 700.00, 0.01};
 int main() {
   tools::cpu_threads().setThreadNumType(tools::MAX_THREAD).setScheduleType(tools::DYNAMIC).setScheduleNum(64);
+  // #define DEBUGPATH 1
+  // #ifdef DEBUGPATH
+  std::filesystem::current_path("/media/ustc-pni/5282FE19AB6D5297/testCase/testE180Case");
+  // #endif
+  //   std::cout << "Current working directory: " << std::filesystem::current_path() << std::endl;
 
-  auto polygonSys = E180();
-  auto michInfo = core::MichInfoHub::create(polygonSys);
-  // grids info
-  auto attnGrids = core::Grids<3>::create_by_spacing_size(core::Vector<float, 3>::create(.5f, .5f, .5f),
-                                                          core::Vector<int64_t, 3>::create(320, 320, 400));
-  auto osemGrids = core::Grids<3>::create_by_spacing_size(core::Vector<float, 3>::create(.5f, .5f, .5f),
-                                                          core::Vector<int64_t, 3>::create(320, 320, 400));
-  // notice::no deadtime data so we dont do dt corrections
+  std::cout << "\n=== OSEM simple gpu Test ===\n" << std::endl;
+  //==============================================================CONFIG LOADING
+  std::string polygonDefineFilePath = "config/polygonSystemDefine.json";
+  std::string osemParamsFilePath = "config/OSEMParams.json";
+  std::string attnParamsFilePath = "config/attnParams.json";
+  std::string normParamsFilePath = "config/normalizationParams.json";
+  std::string scatParamsFilePath = "config/scatParams.json";
+  std::string promptDataPath = "Data/source/coin_all.image3d";
+  std::string delayDataPath = "Data/source/delay.pni";
+  std::string normFactorPath = "Data/result/norm_factors.dat";
+  std::string attnMapPath = "Data/source/attn_ct_img.dat";
 
-  // files
-  std::string in_prompt = "graphic_test/coin_all.image3d";
-  std::string in_delay = "20251103_wellcounterdata/Slice4798/delay_all.image3d";
-  std::string in_attnMap =
-      "20251103_wellcounterdata/CTRecon4888/ct_attn_img.dat";
-
-  auto promptData = read_from_file<float>(in_prompt, michInfo.getMichSize(), 6);
-  // auto delayData = read_from_file<float>(in_delay, michInfo.getMichSize(), 6);
-  auto attnMapData = read_from_file<float>(in_attnMap, attnGrids.totalSize(), 6);
-
-  //===== generateCorrections
-  // 1.norm
-  openpni::experimental::node::MichNormalization norm(polygonSys);
-  // set norm parameters
-  // norm.recoverFromFile("graphic_test/normCoff.bin");
-  // norm.bindSelfNormMich(delayData.get());
-  // 2.attn
-  openpni::experimental::node::MichAttn attn(polygonSys);
-  attn.setFetchMode(node::MichAttn::FromPreBaked);
-  // set attn parameters
-  attn.setPreferredSource(node::MichAttn::Attn_GPU);
-  attn.setMapSize(attnGrids);
-  attn.bindHAttnMap(attnMapData.get());
-  // 3.random
-  openpni::experimental::node::MichRandom rand(polygonSys);
-  // rand.setBadChannelThreshold(BadChannelThreshold); no badchannel in random
-  // rand.setMinSectorDifference(minSectorDifference);
-  // rand.setRadialModuleNumS(radialModuleNumS);
-  // rand.setDelayMich(delayData.get());
-  // 4.scatter
-  // openpni::experimental::node::MichScatter scatter(polygonSys);
-  // scatter.setMinSectorDifference(minSectorDifference);
-  // scatter.setTailFittingThreshold(taiFittingThreshold);
-  // scatter.setScatterPointsThreshold(scatterPointsThreshold);
-  // scatter.setScatterEnergyWindow(scatterEnergyWindow);
-  // scatter.setScatterEffTableEnergy(scatterEffTableEnergy);
-  // scatter.bindAttnCoff(&attn);
-  // scatter.bindNorm(&norm);
-  // scatter.bindRandom(&rand);
-  // scatter.bindHPromptMich(promptData.get());
-  // scatter.bindHEmissionMap(osemGrids, nullptr);
-  //===== recon
+  openpni::experimental::core::MichDefine mich;
   example::OSEM_params params;
-  params.binCutRatio = 0.15f;
-  params.iterNum = 10;
-  params.sample_rate = 0.5f;
-  params.subsetNum = 1;
-  params.scatterSimulations = 1;
-
   node::GaussianConv3D conv3D;
-  conv3D.setHWHM(1.f); // 1.0 mm
+  openpni::experimental::node::MichNormalization *norm = nullptr;
+  openpni::experimental::node::MichAttn *attn = nullptr;
+  openpni::experimental::node::MichRandom *rand = nullptr;
+  openpni::experimental::node::MichScatter *scatter = nullptr;
+  {
+    auto polyJson = readFromJson<openpni::autogen::json::PolygonalSystem>(polygonDefineFilePath);
+    auto &polygon = mich.polygon;
+    polygon.edges = polyJson.Edges;
+    polygon.detectorLen = polyJson.DetectorLen;
+    polygon.detectorPerEdge = polyJson.DetectorPerEdge;
+    polygon.radius = polyJson.Radius;
+    polygon.angleOf1stPerp = polyJson.AngleOf1stPerp;
+    polygon.detectorRings = polyJson.DetectorRings;
+    polygon.ringDistance = polyJson.RingDistance;
+    auto &detector = mich.detector;
+    detector.blockNumU = polyJson.DetectorBlockNumU;
+    detector.blockNumV = polyJson.DetectorBlockNumV;
+    detector.blockSizeU = polyJson.DetectorBlockSizeU;
+    detector.blockSizeV = polyJson.DetectorBlockSizeV;
+    detector.crystalNumU = polyJson.DetectorCrystalNumU;
+    detector.crystalNumV = polyJson.DetectorCrystalNumV;
+    detector.crystalSizeU = polyJson.DetectorCrystalSizeU;
+    detector.crystalSizeV = polyJson.DetectorCrystalSizeV;
+  }
+  auto michInfo = core::MichInfoHub::create(mich);
 
+  auto OSEMParams = readFromJson<openpni::autogen::json::michOSEMParams>(osemParamsFilePath);
+  {
+    // params.subsetNum = static_cast<int>(OSEMParams.SubsetNum);
+    params.subsetNum = 12;
+    params.iterNum = static_cast<int>(OSEMParams.IterNum);
+    params.binCutRatio = static_cast<float>(OSEMParams.BinCutRatio);
+    params.sample_rate = static_cast<float>(OSEMParams.SampleRate);
+    params.scatterSimulations = static_cast<int>(OSEMParams.ScatterSimulations);
+    conv3D.setHWHM(static_cast<float>(OSEMParams.ConvHWHM));
+  }
+
+  auto osemGrids = core::Grids<3>::create_by_spacing_size(
+      core::Vector<float, 3>::create(static_cast<float>(OSEMParams.ImgGridsX), static_cast<float>(OSEMParams.ImgGridsY),
+                                     static_cast<float>(OSEMParams.ImgGridsZ)),
+      core::Vector<int64_t, 3>::create(OSEMParams.ImgGridsNumX, OSEMParams.ImgGridsNumY, OSEMParams.ImgGridsNumZ));
+
+  auto promptData = read_from_file<float>(promptDataPath, michInfo.getMichSize(), 6);
+  std::unique_ptr<float[]> attnMapData;
+  std::unique_ptr<float[]> delayData;
+
+  if (OSEMParams.HasNorm) {
+    auto normParams = readFromJson<openpni::autogen::json::NormalizationParams>(normParamsFilePath);
+    norm = new node::MichNormalization(mich);
+    norm->recoverFromFile(normFactorPath);
+    delayData = read_from_file<float>(delayDataPath, michInfo.getMichSize(), 6);
+    norm->bindSelfNormMich(delayData.get());
+    // if (OSEMParams.HasDeadtime) {
+    //   norm->setDeadTimeTable(nullptr);
+    // }
+  }
+  core::Grids<3> attnGrids;
+  if (OSEMParams.HasAttn) {
+    auto attnParams = readFromJson<openpni::autogen::json::AttnParams>(attnParamsFilePath);
+    attnGrids = core::Grids<3>::create_by_spacing_size(
+        core::Vector<float, 3>::create(attnParams.UmapGridsX, attnParams.UmapGridsY, attnParams.UmapGridsZ),
+        core::Vector<int64_t, 3>::create(attnParams.UmapGridsNumX, attnParams.UmapGridsNumY, attnParams.UmapGridsNumZ));
+    attnMapData = read_from_file<float>(attnMapPath, attnGrids.totalSize(), 6);
+    attn = new node::MichAttn(mich);
+    attn->setFetchMode(node::MichAttn::FromPreBaked);
+    attn->setPreferredSource(node::MichAttn::Attn_GPU);
+    attn->setMapSize(attnGrids);
+    attn->bindHAttnMap(attnMapData.get());
+  }
+  if (OSEMParams.HasRand) {
+    rand = new node::MichRandom(mich);
+    rand->setMinSectorDifference(minSectorDifference);
+    rand->setRadialModuleNumS(radialModuleNumS);
+    delayData = read_from_file<float>(delayDataPath, michInfo.getMichSize(), 6);
+    rand->setDelayMich(delayData.get());
+  }
+  core::Grids<3> sssGrids;
+  if (OSEMParams.HasScat && attn != nullptr && norm != nullptr && rand != nullptr) {
+    scatter = new node::MichScatter(mich);
+    auto scatParams = readFromJson<openpni::autogen::json::scatParams>(scatParamsFilePath);
+    sssGrids = core::Grids<3>::create_by_spacing_size(
+        core::Vector<float, 3>::create(static_cast<float>(scatParams.SSSGridsX),
+                                       static_cast<float>(scatParams.SSSGridsY),
+                                       static_cast<float>(scatParams.SSSGridsZ)),
+        core::Vector<int64_t, 3>::create(scatParams.SSSGridsNumX, scatParams.SSSGridsNumY, scatParams.SSSGridsNumZ));
+    scatter->setMinSectorDifference(scatParams.MinSectorDifference);
+    scatter->setTailFittingThreshold(scatParams.TaiFittingThreshold);
+    scatter->setScatterPointsThreshold(scatParams.ScatterPointsThreshold);
+    scatter->setScatterEnergyWindow(core::Vector<double, 3>::create(
+        static_cast<double>(scatParams.ScatterEnergyWindowLow), static_cast<double>(scatParams.ScatterEnergyWindowHigh),
+        static_cast<double>(scatParams.ScatterEnergyWindowResolution)));
+    scatter->setScatterEffTableEnergy(
+        core::Vector<double, 3>::create(static_cast<double>(scatParams.ScatterEffTableEnergyLow),
+                                        static_cast<double>(scatParams.ScatterEffTableEnergyHigh),
+                                        static_cast<double>(scatParams.ScatterEffTableEnergyInterval)));
+    scatter->setScatterPointGrid(sssGrids);
+    scatter->bindAttnCoff(attn);
+    scatter->bindNorm(norm);
+    scatter->bindRandom(rand);
+    scatter->bindHPromptMich(promptData.get());
+    scatter->bindHEmissionMap(osemGrids, nullptr);
+  }
+
+  std::cout << "\n=== Configuration loaded successfully! ===\n" << std::endl;
+
+  //===== recon
   std::unique_ptr<float[]> outImg = std::make_unique_for_overwrite<float[]>(osemGrids.totalSize());
-#define CALI 0
+#define CALI 1
 #if CALI
   example::instant_OSEM_mich_CUDA(core::Image3DOutput<float>{osemGrids, outImg.get()}, params, conv3D, promptData.get(),
-                                  &norm, &rand, &scatter, &attn, polygonSys);
+                                  norm, rand, scatter, attn, mich);
 #else
   example::instant_OSEM_mich_CUDA(core::Image3DOutput<float>{osemGrids, outImg.get()}, params, conv3D, promptData.get(),
-                                  nullptr, nullptr, nullptr, &attn, polygonSys);
+                                  nullptr, nullptr, nullptr, nullptr, mich);
 #endif
 
   std::cout << "OSEM done\n";
 
-  std::ofstream outFile("overall_wellCounter_recon_img_gpu.bin", std::ios::binary);
+  std::ofstream outFile("Data/result/overall_wellCounter_recon_img_gpu.bin", std::ios::binary);
   outFile.write(reinterpret_cast<char *>(outImg.get()), osemGrids.totalSize() * sizeof(float));
   outFile.close();
 

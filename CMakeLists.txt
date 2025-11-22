@@ -36,24 +36,19 @@ enable_language(CXX CUDA)
 
 set(LIBTORCH_CMAKE_PREFIX "/opt/libtorch/share/cmake/Torch")
 set(CUDA_INCLUDE_DIR "/opt/cuda/include")
-set(CUDA_CCCL_INCLUDE_DIR "/opt/cuda/targets/x86_64-linux/include/cccl")
-set(CUDA_LINUX_INCLUDE_DIR "/opt/cuda/targets/x86_64-linux/include")
+set(CUDA_CCCL_INCLUDE_DIR "/opt/cuda/include/cccl")
 set(CUDA_LIBRARY_DIR "/opt/cuda/lib64")
 
-set(CUDA_NVRTC_SHORTHASH 1)
+# set(CUDA_NVRTC_SHORTHASH 1)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_CMAKE_PREFIX})
 
-find_package(Threads REQUIRED)
-find_package(OpenCV CONFIG REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 find_package(Torch CONFIG REQUIRED)
 
 # add_subdirectory(${THIRD_PARTY_DIR}/drjit)
 add_subdirectory(${THIRD_PARTY_DIR}/pni-standard-project)
 
 include_directories(${CXX_HEADER_DIR})
-include_directories(
-        ${THIRD_PARTY_DIR}/drjit/ext/nanobind/include
-)
 
 
 if (DRJIT_ENABLE_CUDA)
@@ -76,10 +71,8 @@ file(GLOB_RECURSE CXX_HEADERS
 add_executable(pet_recon)
 
 target_link_libraries(pet_recon PRIVATE
-        Threads::Threads
         pni
         pni_cu
-        ${OpenCV_LIBS}
         ${TORCH_LIBRARIES}
 )
 
@@ -87,20 +80,14 @@ target_sources(pet_recon PRIVATE
         ${CXX_SOURCES}
         ${CXX_HEADERS}
 )
-find_library(CUDA_CUDART_LIBRARY cudart HINTS /opt/cuda/targets/x86_64-linux/lib)
 
 
 add_executable(pni_recon
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/pni-standard-project/manual-test/Recon/overall_osem_simple_gpu.cpp
 )
 
-target_include_directories(pni_recon PRIVATE
-        ${CUDA_LINUX_INCLUDE_DIR}
-)
 
 target_link_libraries(pni_recon PRIVATE
-        Threads::Threads
         pni
         pni_cu
-        ${CUDA_CUDART_LIBRARY}
 )

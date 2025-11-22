@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Main serialization="json" type="struct" name="FBPParams">
+    <rebinMethod type="string" />
+    <nRingDiff type="int" />
+    <nSampNumInBin type="int" />
+    <nSampNumInView type="int" />
+    <deltalim type="int" />
+    <klim type="int" />
+    <wlim type="int" />
+    <sampling_distance_in_s type="double" />
+    <detectorLen type="double" />
+    <ImgGridsX  type="double" />
+    <ImgGridsY  type="double" />
+    <ImgGridsZ  type="double" />
+    <ImgGridsNumX  type="int" />
+    <ImgGridsNumY  type="int" />
+    <ImgGridsNumZ  type="int" />
+</Main>

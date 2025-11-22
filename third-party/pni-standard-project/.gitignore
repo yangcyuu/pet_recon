@@ -2,12 +2,15 @@ build
 build/
 test
 test/
+include/PnI-Config.hpp
 release/
 release*
 old/
 newTest/
 lgx_imgProcessing/
 lgx_test_for_correction_data/
+src/autogen
+src/autogen/*
 third-party
 third-party/*
 *.out

@@ -106,6 +106,8 @@
         "__functional_base": "cpp",
         "__memory": "cpp",
         "target": "cpp",
-        "csetjmp": "cpp"
-    }
+        "csetjmp": "cpp",
+        "__debug": "cpp"
+    },
+    "C_Cpp.errorSquiggles": "enabled"
 }

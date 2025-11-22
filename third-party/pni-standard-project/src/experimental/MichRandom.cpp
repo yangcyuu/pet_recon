@@ -30,10 +30,23 @@ public:
   ~MichRandom_impl() = default;
 
 public:
-  void setRandomRatio(
-      float randomRatio) {
-    m_randomRatio = std::clamp(randomRatio, 0.f, 1.f);
+  // void setRandomRatio(
+  //     float randomRatio) {
+  //   m_randomRatio = std::clamp(randomRatio, 0.f, 1.f);
+  // }
+  // test
+  void setCountRatio(
+      float countRatio) {
+    m_countRatio = std::clamp(countRatio, 0.f, 1.f);
   }
+  void setTimeBinRatio(
+      float timeBinRatio) {
+    m_timeBinRatio = std::clamp(timeBinRatio, 0.f, 1.f);
+  }
+  float getCountRatio() { return m_countRatio; }
+
+  float getTimeBinRatio() { return m_timeBinRatio; }
+  //
   void setMinSectorDifference(
       int minSectorDifference) {
     m_minSectorDifference = std::max(0, minSectorDifference);
@@ -69,6 +82,9 @@ public:
     auto [block, fan] = impl::calBlockLORAndFanLOR(m_mich, listmodes);
     move_or_add(mh_blockLOR, std::move(block));
     move_or_add(mh_fanLOR, std::move(fan));
+    PNI_DEBUG(std::format("Added {} delay listmodes.\n", listmodes.size()));
+    PNI_DEBUG(std::format("Block LOR[0,0]: {}, Fan LOR[0,0]: {}\n", mh_blockLOR.empty() ? 0.f : mh_blockLOR[0],
+                          mh_fanLOR.empty() ? 0.f : mh_fanLOR[0]));
     reset_factors(); // clear: means not calculated, should be recalculated later.
   }
 
@@ -101,7 +117,8 @@ public:
       mh_bufferedValues.resize(h_events.size());
     tools::parallel_for_each(h_events.size(), [&](std::size_t i) {
       const auto &event = h_events[i];
-      mh_bufferedValues[i] = impl::get_factor(event, mh_factors.data(), m_mich, m_minSectorDifference) * m_randomRatio;
+      mh_bufferedValues[i] = impl::get_factor(event, mh_factors.data(), m_mich, m_minSectorDifference) *
+                             m_countRatio; // 20251111lgx:m_randomRatio may not apply here!
     });
     return mh_bufferedValues.data();
   }
@@ -111,7 +128,7 @@ public:
     if (d_events.size() > md_bufferedValues.elements())
       md_bufferedValues.reserve(d_events.size());
     impl::getDRandomFactors(d_events, md_factors.data(), m_mich, m_minSectorDifference, md_bufferedValues.data());
-    example::d_parralel_mul(md_bufferedValues.data(), m_randomRatio, md_bufferedValues.data(),
+    example::d_parallel_mul(md_bufferedValues.data(), m_countRatio, md_bufferedValues.data(),
                             md_bufferedValues.elements());
     return md_bufferedValues.data();
   }
@@ -134,7 +151,9 @@ public:
     auto result = std::make_unique<MichRandom_impl>(m_mich);
     result->mh_blockLOR = mh_blockLOR;
     result->mh_fanLOR = mh_fanLOR;
-    result->m_randomRatio = m_randomRatio;
+    // result->m_randomRatio = m_randomRatio;
+    result->m_countRatio = m_countRatio;
+    result->m_timeBinRatio = m_timeBinRatio;
     result->m_minSectorDifference = m_minSectorDifference;
     result->m_radialModuleNumS = m_radialModuleNumS;
     result->m_badChannelThreshold = m_badChannelThreshold;
@@ -164,6 +183,7 @@ private:
   }
   void calculate_hFactors() {
     std::lock_guard lock(m_mutex); // ensure only one thread calculate factors.
+    mh_factors.clear();
     mh_factors.resize(MichInfoHub(m_mich).getTotalCrystalNum(), 0);
     md_factors.clear(); // clear device factors because host factors changed.
     if (mh_blockLOR.empty() || mh_fanLOR.empty())
@@ -174,10 +194,15 @@ private:
   }
 
 private:
-  const core::MichDefine m_mich;
   int m_minSectorDifference = 0;
   int m_radialModuleNumS = 0;
   float m_badChannelThreshold = 0;
+  // float m_randomRatio = 1.0f;
+  // test
+  float m_timeBinRatio = 1.0f;
+  float m_countRatio = 1.0f;
+  //
+
   std::vector<float> mh_factors;                         // 每个晶体的随机因子，Rectangle Layout
   cuda_sync_ptr<float> md_factors{"MichRandom_factors"}; // 每个晶体的随机因子，Rectangle Layout
   std::vector<float> mh_bufferedValues;
@@ -185,8 +210,8 @@ private:
   std::vector<core::MichStandardEvent> mh_bufferedEvents;
   std::recursive_mutex m_mutex;
   std::vector<float> mh_blockLOR;
+  const core::MichDefine m_mich;
   std::vector<float> mh_fanLOR;
-  float m_randomRatio = 1.0f;
 };
 
 MichRandom::MichRandom(
@@ -195,6 +220,8 @@ MichRandom::MichRandom(
 MichRandom::MichRandom(
     std::unique_ptr<MichRandom_impl> impl)
     : m_impl(std::move(impl)) {}
+MichRandom::MichRandom(MichRandom&&) noexcept = default;
+MichRandom &MichRandom::operator=(MichRandom&&) noexcept = default;
 MichRandom::~MichRandom() {};
 MichRandom MichRandom::copy() const {
   return MichRandom(m_impl->copy());
@@ -249,8 +276,23 @@ float const *MichRandom::getDRandomFactorsBatch(
     std::span<std::size_t const> lorIndices) {
   return m_impl->getDRandomFactorsBatch(lorIndices);
 }
-void MichRandom::setRandomRatio(
-    float randomRatio) {
-  m_impl->setRandomRatio(randomRatio);
+// void MichRandom::setRandomRatio(
+//     float randomRatio) {
+//   m_impl->setRandomRatio(randomRatio);
+// }
+// lgxtest
+void MichRandom::setCountRatio(
+    float countRatio) {
+  m_impl->setCountRatio(countRatio);
+}
+void MichRandom::setTimeBinRatio(
+    float timeBinRatio) {
+  m_impl->setTimeBinRatio(timeBinRatio);
+}
+float MichRandom::getCountRatio() {
+  return m_impl->getCountRatio();
+}
+float MichRandom::getTimeBinRatio() {
+  return m_impl->getTimeBinRatio();
 }
 } // namespace openpni::experimental::node

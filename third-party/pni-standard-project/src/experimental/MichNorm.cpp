@@ -11,12 +11,8 @@ MichNormalization::~MichNormalization() {}
 MichNormalization::MichNormalization(
     std::unique_ptr<MichNormalization_impl> impl)
     : m_impl(std::move(impl)) {}
-MichNormalization MichNormalization::copy() const {
-  return MichNormalization(m_impl->copy());
-}
-std::unique_ptr<MichNormalization> MichNormalization::copyPtr() {
-  return std::make_unique<MichNormalization>(m_impl->copy());
-}
+MichNormalization::MichNormalization(MichNormalization &&) noexcept = default;
+MichNormalization &MichNormalization::operator=(MichNormalization &&) noexcept = default;
 
 std::unique_ptr<float[]> MichNormalization::dumpNormalizationMich() {
   return m_impl->dumpNormalizationMich();
@@ -38,8 +34,8 @@ float const *MichNormalization::getDNormFactorsBatch(
     std::span<std::size_t const> lorIndices, FactorBitMask im) {
   return m_impl->getDNormFactorsBatch(lorIndices, im);
 }
-std::unique_ptr<float[]> MichNormalization::getActivityMich() {
-  return m_impl->getActivityMich();
+std::unique_ptr<float[]> MichNormalization::dumpActivityMich() {
+  return m_impl->dumpActivityMich();
 }
 std::unique_ptr<float[]> MichNormalization::dumpCryFctMich() {
   return m_impl->dumpCryFctMich();
@@ -55,6 +51,27 @@ std::unique_ptr<float[]> MichNormalization::dumpPlaneFctMich() {
 }
 std::unique_ptr<float[]> MichNormalization::dumpInterferenceFctMich() {
   return m_impl->dumpInterferenceFctMich();
+}
+std::vector<float> MichNormalization::dumpCryCount() {
+  return m_impl->dumpCryCount();
+}
+std::vector<float> MichNormalization::dumpBlockFctA() {
+  return m_impl->dumpBlockFctA();
+}
+std::vector<float> MichNormalization::dumpBlockFctT() {
+  return m_impl->dumpBlockFctT();
+}
+std::vector<float> MichNormalization::dumpPlaneFct() {
+  return m_impl->dumpPlaneFct();
+}
+std::vector<float> MichNormalization::dumpRadialFct() {
+  return m_impl->dumpRadialFct();
+}
+std::vector<float> MichNormalization::dumpInterferenceFct() {
+  return m_impl->dumpInterferenceFct();
+}
+std::vector<float> MichNormalization::dumpCryFct() {
+  return m_impl->dumpCryFct();
 }
 void MichNormalization::setShell(
     float innerRadius, float outerRadius, float axialLength, float parallaxScannerRadial, core::Grids<3, float> grids) {

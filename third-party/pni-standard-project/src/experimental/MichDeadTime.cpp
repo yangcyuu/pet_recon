@@ -42,7 +42,8 @@ static std::vector<float> down_sampling_mich_by_block_slice(
 class MichDeadTime_impl {
 public:
   MichDeadTime_impl(
-      core::MichDefine mich): m_michDefine{mich} {}
+      core::MichDefine mich)
+      : m_michDefine{mich} {}
   ~MichDeadTime_impl() {}
 
 public:
@@ -68,6 +69,7 @@ public:
   void dumpToFile(
       std::string const &filename) {
     checkTable();
+    save_dt_to_file(filename, m_cfdtTable, m_rtTable);
   }
   void recoverFromFile(
       std::string const &filename) {

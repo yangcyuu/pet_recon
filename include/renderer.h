@@ -1,192 +1,172 @@
 #pragma once
 
-#include <PnI-Config.hpp>
-#include <experimental/node/MichCrystal.hpp>
-
-#include "cgmath.h"
+#include "crystal_buffer.h"
 #include "define.h"
-#include "raw_data.h"
+#include "math_utils.h"
+#include "scatter_generator.h"
 #include "sobol.h"
 #include "texture.h"
-#include "utils.h"
 
-struct RendererParameters {
-  using Vector3 = openpni::experimental::core::Vector<float, 3>;
-  using MichDefine = openpni::experimental::core::MichDefine;
-
-  /** @brief 输入 MICH 数据文件路径 */
-  std::string_view mich_file;
-  /** @brief 输入 MICH 延迟数据文件路径 */
-  std::string_view mich_delay_file;
-  /** @brief 输入 MICH 衰减数据文件路径 */
-  std::string_view mich_attn_file;
-  /** @brief 输入 MICH 标准化数据文件路径 */
-  std::string_view mich_norm_file;
-  /** @brief 文件偏移（用于跳过前部数据） */
-  std::ifstream::off_type offset = 0;
-  /** @brief 延迟文件偏移（用于跳过前部数据） */
-  std::ifstream::off_type delay_offset = 0;
-  /** @brief 衰减文件偏移（用于跳过前部数据） */
-  std::ifstream::off_type attn_offset = 0;
-  /** @brief 标准化文件偏移（用于跳过前部数据） */
-  std::ifstream::off_type norm_offset = 0;
-  /** @brief 晶体位置采样标准差 */
-  float crystal_sigma = 0.1f;
-  /** @brief 每个晶体的采样 sub-LOR 数量 */
-  size_t samples_per_crystal = 16;
-  /** @brief 每条 sub-LOR 的采样数量 */
-  size_t samples_per_lor = 16;
-  /** @brief 每个切片的迭代次数 */
-  size_t iter_per_slice = 10;
-  /** @brief 每次处理的 LOR 数量 */
-  size_t batch_size = 32768;
-  /** @brief 是否使用 Sobol 低差采样 */
+struct RendererParams : ScatterParams {
+  std::string norm_path;
+  std::fstream::off_type norm_offset = 0;
+  float psf_sigma = 0.0f;
+  int64_t sub_lor_num = 16;
+  int64_t sample_num = 16;
+  int64_t max_iterations = 10;
+  int64_t batch_size = 65536;
   bool use_sobol = false;
-  /** @brief 是否使用线性采样 */
   bool linear_sampling = false;
-  /** @brief 线性采样步长 */
+  bool importance_sampling = false;
+  bool compute_scatter = false;
   float linear_step = 1.0f;
-  /** @brief 学习率 */
-  float learning_rate = 1e-3f;
-  /** @brief 是否启用 TOF 重要性采样 */
-  bool enable_importance_sampling = false;
-  /** @brief TOF 权重函数标准差（暂时无用，需要改为从数据中读取） */
-  float tof_sigma = 0.5f;
-  /** @brief TOF 偏移中心（暂时无用，需要改为从数据中读取） */
-  float tof_center_offset = 0;
-  /** @brief 随机种子 */
+  float tof_sigma = 0.0f;
+  float tof_center_offset = 0.0f;
   size_t seed = 42;
-  /** @brief 单体素尺寸 */
-  Vector3 voxel_size = {0.5f, 0.5f, 0.5f};
-  /** @brief 重建图像像素大小 */
-  Vector3 image_size = {320, 320, 400};
-  /** @brief 扫描系统几何描述 */
-  MichDefine define = E180();
 };
 
 class Renderer {
-  using Vector3 = openpni::experimental::core::Vector<float, 3>;
-  using MichDefine = openpni::experimental::core::MichDefine;
-  using RangeGenerator = openpni::experimental::core::RangeGenerator;
-  using MichCrystal = openpni::experimental::node::MichCrystal;
-  using RectangleID = openpni::experimental::core::RectangleID;
-  using RectangleGeom = openpni::experimental::core::RectangleGeom<float>;
 
 public:
   Renderer() = default;
-  explicit Renderer(const RendererParameters &parameters) :
-      _mich_range_generator(RangeGenerator::create(parameters.define)),
-      _mich(RawPETData<float>::from_file(parameters.mich_file,
-                                         {
-                                             .num_bins = _mich_range_generator.allBins().size(),
-                                             .num_views = _mich_range_generator.allViews().size(),
-                                             .num_slices = _mich_range_generator.allSlices().size(),
-                                         },
-                                         parameters.offset)),
-      _mich_crystal(MichCrystal(parameters.define)), _voxel_size(parameters.voxel_size),
-      _image_size(parameters.image_size), _crystal_sigma(parameters.crystal_sigma),
-      _samples_per_crystal(parameters.samples_per_crystal), _samples_per_lor(parameters.samples_per_lor),
-      _iter_per_slice(parameters.iter_per_slice), _batch_size(parameters.batch_size), _use_sobol(parameters.use_sobol),
-      _linear_sampling(parameters.linear_sampling), _linear_step(parameters.linear_step),
-      _enable_importance_sampling(parameters.enable_importance_sampling), _tof_sigma(parameters.tof_sigma),
-      _tof_center_offset(parameters.tof_center_offset) {
-    torch::manual_seed(parameters.seed);
-    if (!parameters.mich_delay_file.empty()) {
-      _mich_delay = RawPETData<float>::from_file(
-          parameters.mich_delay_file,
-          {
-              .num_bins = _mich_range_generator.allBins().size(),
-              .num_views = _mich_range_generator.allViews().size(),
-              .num_slices = _mich_range_generator.allSlices().size(),
-          },
-          parameters.delay_offset);
-    }
-    if (!parameters.mich_attn_file.empty()) {
-      _mich_attn = RawPETData<float>::from_file(
-          parameters.mich_attn_file,
-          {
-              .num_bins = _mich_range_generator.allBins().size(),
-              .num_views = _mich_range_generator.allViews().size(),
-              .num_slices = _mich_range_generator.allSlices().size(),
-          },
-          parameters.attn_offset);
-    }
-    if (!parameters.mich_norm_file.empty()) {
-      _mich_norm = RawPETData<float>::from_file(
-          parameters.mich_norm_file,
-          {
-              .num_bins = _mich_range_generator.allBins().size(),
-              .num_views = _mich_range_generator.allViews().size(),
-              .num_slices = _mich_range_generator.allSlices().size(),
-          },
-          parameters.norm_offset);
-    }
-  }
 
-  void render(std::string_view path = {});
+  explicit Renderer(const RendererParams &params);
 
+  void render(bool save_log = false);
 
-  void save(const std::string_view path) const { (_final_result * _mask).save_rawdata(path); }
+  void save(const std::string &path);
 
 private:
-  RangeGenerator _mich_range_generator = RangeGenerator::create(E180());
-  RawPETData<float> _mich;
-  RawPETData<float> _mich_delay;
-  RawPETData<float> _mich_attn;
-  RawPETData<float> _mich_norm;
-
-  MichCrystal _mich_crystal = MichCrystal(E180());
-
-  Vector3 _voxel_size = {0.5f, 0.5f, 0.5f};
-  Vector3 _image_size = {320, 320, 400};
-
-  float _crystal_sigma = 0.1f;
-  size_t _samples_per_crystal = 16;
-  size_t _samples_per_lor = 16;
-  size_t _iter_per_slice = 10;
-  size_t _batch_size = 32768;
+  Grids<3> _image_grid;
+  MichDefine _define;
+  float _psf_sigma = 0.0f;
+  int64_t _sub_lor_num = 16;
+  int64_t _sample_num = 16;
+  int64_t _max_iterations = 10;
+  int64_t _batch_size = 65536;
   bool _use_sobol = false;
   bool _linear_sampling = false;
+  bool _importance_sampling = false;
+  bool _compute_scatter = false;
   float _linear_step = 1.0f;
-  bool _enable_importance_sampling = false;
-  float _tof_sigma = 0.5f;
-  float _tof_center_offset = 0;
+  float _tof_sigma = 0.0f;
+  float _tof_center_offset = 0.0f;
 
-  size_t _curr_iter = 0;
-  size_t _curr_slice = 0;
-  bool _rendering_uniform = false;
+  MichCrystal _crystal = MichCrystal(E180());
+  ScatterGenerator _scatter_generator;
+  CrystalBuffer<float> _crystal_buffer;
 
-  Texture3D _final_result = Texture3D(1.0f, _image_size[0], _image_size[1], _image_size[2], 1, torch::kCUDA);
-  Texture3D _uniform_result = Texture3D(1.0f, _image_size[0], _image_size[1], _image_size[2], 1, torch::kCUDA);
+  SobolEngine _p0_sobol = SobolEngine(3, true);
+  SobolEngine _p1_sobol = SobolEngine(3, true);
+  SobolEngine _linear_sobol = SobolEngine(1, true);
 
-  Texture3D _mask = Texture3D(false, _image_size[0], _image_size[1], _image_size[2], 1,
-                              torch::dtype(torch::kBool).device(torch::kCUDA));
+  Texture3D _mich;
+  Texture3D _norm;
+  Texture3D _attn;
+  Texture3D _delay;
 
+  Texture3D _emap;
+  Texture3D _senmap;
+  Texture3D _mask;
 
-  SobolEngine _crystal0_sobol = SobolEngine(3, true);
-  SobolEngine _crystal1_sobol = SobolEngine(3, true);
-  SobolEngine _linear_tof_sobol = SobolEngine(1, true);
+  torch::Tensor tof_weight(const torch::Tensor &x) const;
+  torch::Tensor tof_pdf(const torch::Tensor &x) const;
 
-  // void render_crystal(const CrystalGeometry &start, const CrystalGeometry &end,
-  //                     size_t bin_index, size_t view_index,
-  //                     const Texture3D &source, DiffImage2D<float> &result);
+  torch::Tensor render_lor(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
+                           const torch::Tensor &p0v, const torch::Tensor &p0n, const torch::Tensor &p1u,
+                           const torch::Tensor &p1v, const torch::Tensor &p1n, const torch::Tensor &p0_samples,
+                           const torch::Tensor &p1_samples, const torch::Tensor &linear_offset,
+                           torch::Tensor tof_samples, const Texture3D &source);
 
   template<std::ranges::view T>
-  bool render_lor(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture3D &result,
-                  Texture3D &uniform_result);
-
-  torch::Tensor render_crystal(const torch::Tensor &p0, const torch::Tensor &p1, const torch::Tensor &p0u,
-                               const torch::Tensor &p0v, const torch::Tensor &p0n, const torch::Tensor &p1u,
-                               const torch::Tensor &p1v, const torch::Tensor &p1n,
-                               const torch::Tensor &crystal0_samples, const torch::Tensor &crystal1_samples,
-                               torch::Tensor tof_samples, const Texture3D &source);
-
-
-  torch::Tensor tof_weight(const torch::Tensor &x) const {
-    if (_tof_sigma <= 0) {
-      return torch::ones_like(x);
-    }
-    return 1 / (std::sqrt(2 * std::numbers::pi_v<float>) * _tof_sigma) *
-           torch::exp(-0.5f * (x - _tof_center_offset) * (x - _tof_center_offset) / (_tof_sigma * _tof_sigma));
-  }
+  bool render_lors(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source, Texture3D &result,
+                   Texture3D &uniform_result);
 };
+
+template<std::ranges::view T>
+bool Renderer::render_lors(const T &lor_indices, const Texture3D &source, const Texture3D &uniform_source,
+                           Texture3D &result, Texture3D &uniform_result) {
+  torch::Device device = torch::kCUDA;
+  int64_t num_lors = std::ranges::distance(lor_indices);
+
+  auto generator = RangeGenerator::create(_define);
+  int64_t bin_num = generator.allBins().size();
+  int64_t view_num = generator.allViews().size();
+  int64_t slice_num = generator.allSlices().size();
+
+  std::vector<size_t> lor_idx;
+  lor_idx.reserve(num_lors);
+  for (size_t i = 0; i < num_lors; ++i) {
+    lor_idx.push_back(lor_indices[i]);
+  }
+
+  auto crystals = _crystal.getHCrystalsBatch(lor_idx);
+  _crystal_buffer.crystals({crystals, 2 * lor_idx.size()});
+
+  auto p0_data = _crystal_buffer.p0();
+  auto p0u_data = _crystal_buffer.u0();
+  auto p0v_data = _crystal_buffer.v0();
+  auto p1_data = _crystal_buffer.p1();
+  auto p1u_data = _crystal_buffer.u1();
+  auto p1v_data = _crystal_buffer.v1();
+  torch::Tensor lors = torch::from_blob(lor_idx.data(), {num_lors}, torch::kInt64).to(device);
+  torch::Tensor p0 = torch::from_blob(p0_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+  torch::Tensor p0u = torch::from_blob(p0u_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+  torch::Tensor p0v = torch::from_blob(p0v_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+  torch::Tensor p1 = torch::from_blob(p1_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+  torch::Tensor p1u = torch::from_blob(p1u_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+  torch::Tensor p1v = torch::from_blob(p1v_data.data(), {num_lors, 3}, torch::kFloat32).to(device);
+
+  float crystal_size = (_define.detector.crystalSizeU + _define.detector.crystalSizeV) * 0.5f;
+  Vector3f extend_size = Vector3f::create(crystal_size) * 0.5f + Vector3f::create(_psf_sigma) * 3.0f;
+  // [N, 1]
+  torch::Tensor lor_mask;
+  std::tie(std::ignore, std::ignore, lor_mask) = line_in_grid(p0, p1, _image_grid, extend_size);
+  lors = lors.masked_select(lor_mask.squeeze(-1));
+  if (lors.size(0) == 0) {
+    return false;
+  }
+  num_lors = lors.size(0);
+  p0 = p0.masked_select(lor_mask).view({-1, 3});
+  p0u = p0u.masked_select(lor_mask).view({-1, 3});
+  p0v = p0v.masked_select(lor_mask).view({-1, 3});
+  p1 = p1.masked_select(lor_mask).view({-1, 3});
+  p1u = p1u.masked_select(lor_mask).view({-1, 3});
+  p1v = p1v.masked_select(lor_mask).view({-1, 3});
+  torch::Tensor bin_idx = lors % bin_num;
+  torch::Tensor view_idx = lors.div(bin_num, "trunc") % view_num;
+  torch::Tensor slice_idx = lors.div(bin_num * view_num, "trunc") % slice_num;
+
+  torch::Tensor p0n = 2.0f * torch::cross(p0u, p0v, 1); // [N, 3]
+  torch::Tensor p1n = 2.0f * torch::cross(p1u, p1v, 1); // [N, 3]
+
+  // [N, N_sub_lor, 3]
+  torch::Tensor p0_samples;
+  torch::Tensor p1_samples;
+  if (_use_sobol) {
+    p0_samples = _p0_sobol.draw(num_lors * _sub_lor_num).view({num_lors, _sub_lor_num, -1}).to(device);
+    p1_samples = _p1_sobol.draw(num_lors * _sub_lor_num).view({num_lors, _sub_lor_num, -1}).to(device);
+  } else {
+    p0_samples = torch::rand({num_lors, _sub_lor_num, 3}, device);
+    p1_samples = torch::rand({num_lors, _sub_lor_num, 3}, device);
+  }
+
+  // [N, N_sub_lor, 1]
+  torch::Tensor linear_offset;
+  // [N, N_sub_lor, N_sample]
+  torch::Tensor tof_samples;
+  if (!_linear_sampling) {
+    tof_samples = torch::rand({num_lors, _sub_lor_num, _sample_num}, device);
+  } else {
+    linear_offset = _linear_sobol.draw(_sub_lor_num).view({1, _sub_lor_num, -1}).to(device);
+  }
+
+  torch::Tensor values = render_lor(p0, p1, p0u, p0v, p0n, p1u, p1v, p1n, p0_samples, p1_samples, linear_offset,
+                                    tof_samples, source); // [N]
+  result.assign(slice_idx, view_idx, bin_idx, torch::zeros_like(bin_idx), values);
+
+  torch::Tensor uniform_values = render_lor(p0, p1, p0u, p0v, p0n, p1u, p1v, p1n, p0_samples, p1_samples, linear_offset,
+                                            tof_samples, uniform_source); // [N]
+  uniform_result.assign(slice_idx, view_idx, bin_idx, torch::zeros_like(bin_idx), uniform_values);
+  return true;
+}
